@@ -1,0 +1,184 @@
+import json
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.models.inspection_finding import InspectionFinding
+from app.models.inspection_run import InspectionRun
+
+
+class InspectionFindingService:
+    """
+    Persists Inspector Agent results into PostgreSQL.
+
+    One InspectionRun represents one execution of the
+    Inspector Agent.
+
+    Each finding generated during that inspection is stored
+    as an InspectionFinding.
+    """
+
+    @staticmethod
+    def save_inspection(
+        db: Session,
+        dataset_path: str,
+        inspection_result: dict[str, Any],
+        row_count: int,
+        column_count: int,
+    ) -> InspectionRun:
+        """
+        Save one complete inspection and all of its findings.
+
+        Existing findings are not reused. Each inspection execution
+        creates a new InspectionRun, preserving the audit history.
+        """
+
+        inspection_run = InspectionRun(
+            dataset_path=dataset_path,
+            status=inspection_result.get(
+                "status",
+                "UNKNOWN",
+            ),
+            highest_severity=inspection_result.get(
+                "highest_severity",
+            ),
+            row_count=row_count,
+            column_count=column_count,
+            finding_count=inspection_result.get(
+                "finding_count",
+                0,
+            ),
+            summary=InspectionFindingService._build_summary(
+                inspection_result,
+            ),
+        )
+
+        db.add(inspection_run)
+        db.flush()
+
+        findings = inspection_result.get(
+            "findings",
+            [],
+        )
+
+        for finding in findings:
+            evidence = finding.get(
+                "evidence",
+                {},
+            )
+
+            inspection_finding = InspectionFinding(
+                inspection_id=inspection_run.id,
+                finding_type=finding.get(
+                    "type",
+                    "UNKNOWN",
+                ),
+                severity=finding.get(
+                    "severity",
+                    "UNKNOWN",
+                ),
+                message=finding.get(
+                    "message",
+                    "",
+                ),
+                evidence=json.dumps(
+                    evidence,
+                    default=str,
+                ),
+                column_name=evidence.get(
+                    "column",
+                ),
+                expected_type=evidence.get(
+                    "expected_type",
+                ),
+                actual_type=evidence.get(
+                    "actual_type",
+                ),
+            )
+
+            db.add(inspection_finding)
+
+        db.commit()
+        db.refresh(inspection_run)
+
+        return inspection_run
+
+    @staticmethod
+    def get_inspection(
+        db: Session,
+        inspection_id,
+    ) -> InspectionRun | None:
+        """
+        Retrieve one persisted inspection.
+        """
+
+        return (
+            db.query(InspectionRun)
+            .filter(
+                InspectionRun.id == inspection_id
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_findings(
+        db: Session,
+        inspection_id,
+    ) -> list[InspectionFinding]:
+        """
+        Retrieve all findings belonging to an inspection.
+        """
+
+        return (
+            db.query(InspectionFinding)
+            .filter(
+                InspectionFinding.inspection_id
+                == inspection_id
+            )
+            .order_by(
+                InspectionFinding.created_at.asc()
+            )
+            .all()
+        )
+
+    @staticmethod
+    def _build_summary(
+        inspection_result: dict[str, Any],
+    ) -> str:
+        """
+        Build a concise human-readable inspection summary.
+        """
+
+        status = inspection_result.get(
+            "status",
+            "UNKNOWN",
+        )
+
+        finding_count = inspection_result.get(
+            "finding_count",
+            0,
+        )
+
+        highest_severity = inspection_result.get(
+            "highest_severity",
+        )
+
+        if finding_count == 0:
+            return (
+                "Inspection completed successfully. "
+                "No data-quality or schema-drift findings "
+                "were detected."
+            )
+
+        if highest_severity:
+            return (
+                f"Inspection detected {finding_count} "
+                f"finding(s). Highest severity: "
+                f"{highest_severity}. "
+                f"Overall status: {status}."
+            )
+
+        return (
+            f"Inspection detected {finding_count} "
+            f"finding(s). Overall status: {status}."
+        )

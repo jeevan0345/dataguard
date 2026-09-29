@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.env
+
+# Node & Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database & Celery
+*.sqlite3
+celerybeat-schedule
+**/reports/*.pdf
+**/reports/*.xlsx
+
+# OS & Editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

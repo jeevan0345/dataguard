@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # PostgreSQL 17 Database
+  # -------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: dataguard-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-JEEVAN}
+      POSTGRES_DB: dataguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------
+  # Redis Message Broker
+  # -------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: dataguard-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # -------------------------------------------------------------
+  # DataGuard FastAPI Backend
+  # -------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: dataguard-backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-JEEVAN}@postgres:5432/dataguard
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dataguard_secret_key_2026}
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./backend/reports:/app/reports
+      - ./datasets:/app/datasets
+
+  # -------------------------------------------------------------
+  # Celery Background Worker
+  # -------------------------------------------------------------
+  celery_worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: dataguard-celery-worker
+    restart: always
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-JEEVAN}@postgres:5432/dataguard
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dataguard_secret_key_2026}
+    depends_on:
+      - backend
+      - redis
+
+  # -------------------------------------------------------------
+  # DataGuard React Frontend
+  # -------------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: dataguard-frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
