@@ -12,6 +12,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from app.database.session import SessionLocal
+from app.database.init_db import create_tables
 from app.auth.service import AuthService
 from app.auth.schemas import UserRegister
 
@@ -20,6 +21,9 @@ def seed_database():
     print("=" * 60)
     print("DATAGUARD 2.0 DATABASE SEEDER")
     print("=" * 60)
+
+    # Ensure all tables exist
+    create_tables()
 
     db = SessionLocal()
     try:
