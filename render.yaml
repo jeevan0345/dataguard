@@ -1,0 +1,34 @@
+# DataGuard 2.0 Render Infrastructure Blueprint
+# Auto-deploys FastAPI Backend + Managed PostgreSQL on Render
+
+databases:
+  - name: dataguard-db
+    databaseName: dataguard
+    user: dataguard_user
+    plan: free
+
+services:
+  - type: web
+    name: dataguard-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    preDeployCommand: "alembic upgrade head && python -m scripts.seed_db"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dataguard-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: CORS_ORIGINS
+        value: "http://localhost:3000,http://localhost:5173"

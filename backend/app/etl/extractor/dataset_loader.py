@@ -1,7 +1,26 @@
 from pathlib import Path
 import csv
 import json
+import os
 from typing import Any
+
+
+def _find_dataset_root() -> Path:
+    env_dir = os.getenv("DATASETS_DIR") or os.getenv("DATASET_ROOT")
+    if env_dir and Path(env_dir).exists():
+        return Path(env_dir).resolve()
+
+    candidates = [
+        Path(__file__).resolve().parents[4] / "datasets",
+        Path(__file__).resolve().parents[3] / "datasets",
+        Path.cwd() / "datasets",
+        Path.cwd().parent / "datasets",
+    ]
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            return c.resolve()
+
+    return (Path(__file__).resolve().parents[4] / "datasets").resolve()
 
 
 class DatasetLoader:
@@ -17,7 +36,7 @@ class DatasetLoader:
     """
 
     PROJECT_ROOT = Path(__file__).resolve().parents[4]
-    DATASET_ROOT = PROJECT_ROOT / "datasets"
+    DATASET_ROOT = _find_dataset_root()
 
     @classmethod
     def load_dataset(

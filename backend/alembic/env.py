@@ -36,6 +36,16 @@ import app.audit.models
 # ---------------------------------------------------------
 config = context.config
 
+# Dynamically override sqlalchemy.url from environment / .env
+from dotenv import load_dotenv
+load_dotenv()
+
+db_url = os.getenv("DATABASE_URL")
+if db_url:
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", db_url)
+
 
 # ---------------------------------------------------------
 # Configure Python logging
