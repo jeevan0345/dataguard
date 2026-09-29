@@ -30,4 +30,4 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
       - key: CORS_ORIGINS
-        value: "http://localhost:3000,http://localhost:5173"
+        value: "https://dataguard-pink.vercel.app,http://localhost:3000,http://localhost:5173"
