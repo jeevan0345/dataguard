@@ -103,7 +103,7 @@ export const LoginView: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick Demo Logins for Evaluators / Viva */}
+          {/* Quick Demo Logins */}
           <div className="mt-8 pt-6 border-t border-slate-800">
             <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
@@ -140,7 +140,7 @@ export const LoginView: React.FC = () => {
 
         {/* Footer info */}
         <div className="mt-6 text-center text-xs text-slate-500">
-          Final-Year Engineering Project • Multi-Agent Autonomous System
+          Enterprise ETL Auditing • Multi-Agent Autonomous System
         </div>
       </div>
     </div>

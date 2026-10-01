@@ -215,22 +215,6 @@ DataGuard features an interactive pipeline simulator designed for live project d
 
 ---
 
-## 9. Academic Viva & Faculty Defense Positioning
+## 9. License
 
-- **Q: Why a Multi-Agent Swarm instead of a single script?**
-  *A: Separation of concerns. Specialized agents operate independently with clear contracts, allowing inspection, diagnostic reasoning, policy-controlled self-healing, and compliance reporting to scale modularly.*
-
-- **Q: Why was Pandas intentionally excluded?**
-  *A: Pandas introduces significant memory bloat, non-deterministic type coercion, and runtime overhead. Pure Python standard libraries combined with vectorized NumPy and SciPy arrays deliver superior throughput and deterministic guarantees.*
-
-- **Q: Why combine Statistical/ML Methods with Generative Reasoning?**
-  *A: Numerical anomaly detection requires mathematical certainty (Z-score, IQR, Isolation Forest, KS-tests). Generative models hallucinate numbers when asked to detect statistical anomalies directly. DataGuard computes exact metrics first, builds structured evidence, and uses agentic reasoning strictly over verified facts.*
-
-- **Q: How is Self-Healing / Recovery made safe in production?**
-  *A: Zero uncontrolled production mutations. Recovery proposals undergo safety policy checks (e.g. maximum drop thresholds, protected primary keys), require human operator sign-off for high-risk changes, and run sandbox verification dry-runs before issuing a certified PASS verdict.*
-
----
-
-## 10. License
-
-Developed as an undergraduate final-year engineering project. Distributed under the MIT License.
+Developed as an open-source engineering project. Distributed under the MIT License.

@@ -7,7 +7,6 @@ import {
   GitPullRequest,
   Search,
   Sparkles,
-  HelpCircle,
   FileCheck2,
   Bot,
   Activity,
@@ -152,24 +151,6 @@ export const AgentSwarmView: React.FC = () => {
     return match?.status || 'ONLINE';
   };
 
-  const vivaQuestions = [
-    {
-      q: 'Why a Multi-Agent Architecture?',
-      a: 'Separation of concerns. Instead of an unmaintainable monolithic script, specialized agents handle inspection, statistical drift, diagnostic reasoning, policy-controlled healing, compliance reporting, and conversational interaction independently with explicit contracts.',
-    },
-    {
-      q: 'Why Was Pandas Intentionally Excluded?',
-      a: 'DataGuard intentionally selected a streamlined processing core (standard Python csv/json streaming, NumPy, and SciPy) to eliminate unnecessary memory overhead, avoid unpredictable dtype casting, and achieve deterministic throughput in ETL validation pipelines.',
-    },
-    {
-      q: 'Why ML + Quantitative Reasoning instead of raw LLM?',
-      a: 'Quantitative anomaly detection requires mathematical precision (3-sigma, IQR, Isolation Forest, KS-test). Raw LLMs hallucinate numbers. DataGuard calculates exact statistics first, constructs structured evidence, and uses agentic reasoning strictly over verified facts.',
-    },
-    {
-      q: 'How is Self-Healing / Recovery Made Safe?',
-      a: 'Zero uncontrolled production changes. Recovery proposals undergo strict policy checks (e.g. max allowable drop threshold, immutable primary keys), require operator sign-off for high risks, and execute dry-runs with post-remediation PASS/FAIL verification.',
-    },
-  ];
 
   return (
     <div className="p-8 space-y-8 max-w-7xl mx-auto">
@@ -244,21 +225,6 @@ export const AgentSwarmView: React.FC = () => {
         })}
       </div>
 
-      {/* Faculty / Viva Positioning Section */}
-      <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
-        <div className="flex items-center gap-2">
-          <HelpCircle className="w-5 h-5 text-purple-400" />
-          <h3 className="text-lg font-bold text-white tracking-tight">Academic & Faculty Defense Positioning</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {vivaQuestions.map((item, idx) => (
-            <div key={idx} className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5">
-              <h4 className="text-xs font-bold text-emerald-300">{item.q}</h4>
-              <p className="text-xs text-slate-400 leading-relaxed">{item.a}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 };
