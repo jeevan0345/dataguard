@@ -96,12 +96,31 @@ To prevent catastrophic uncontrolled modifications in production environments, D
 
 ---
 
-## 6. Experimental Validation & Results
+## 6. Experimental Validation & Empirical Benchmarks
 
-Evaluated on the official **Olist Brazilian E-Commerce Dataset**:
-- Total orders inspected: **99,441 records**
-- Total columns analyzed: **8 features**
-- Ingestion Latency (Pandas-free): **1.42 seconds**
-- ML Isolation Forest Fitting: **0.88 seconds**
-- Root Cause Inference Latency: **42 milliseconds**
-- Anomaly Reduction Post-Recovery: **100% (Certified PASS)**
+Evaluated on the official **Olist Brazilian E-Commerce Dataset** running Python 3.12 without Pandas (`scripts/benchmark.py`):
+
+### 6.1 Throughput and Latency Measurements
+- **Olist Customers (`olist_customers_dataset.csv` — 99,441 rows, 5 columns)**:
+  - Ingestion Latency (Pandas-free): **0.80 seconds** (124,152 rows/sec)
+  - Statistical Profiling: **2.79 seconds** (35,622 rows/sec)
+  - Statistical Outlier Detection (Z-score, IQR): **0.28 seconds** (358,220 rows/sec)
+  - Vectorized Isolation Forest ML: **1.24 seconds** (80,361 rows/sec)
+  - Full Swarm Audit (All 7 Agents + Cryptographic HMAC): **15.96 seconds** (6,231 rows/sec)
+  - Total End-to-End Pipeline Latency: **16.76 seconds** (5,933 rows/sec)
+  - Peak Heap Allocation: **45.40 MB**
+
+- **Olist Order Items (`olist_order_items_dataset.csv` — 112,650 rows, 7 columns)**:
+  - Ingestion Latency (Pandas-free): **1.23 seconds** (91,925 rows/sec)
+  - Statistical Profiling: **4.82 seconds** (23,368 rows/sec)
+  - Statistical Outlier Detection: **0.50 seconds** (225,292 rows/sec)
+  - Vectorized Isolation Forest ML: **1.97 seconds** (57,218 rows/sec)
+  - Full Swarm Audit (All 7 Agents + Cryptographic HMAC): **22.41 seconds** (5,028 rows/sec)
+  - Total End-to-End Pipeline Latency: **23.63 seconds** (4,767 rows/sec)
+  - Peak Heap Allocation: **70.11 MB**
+
+### 6.2 Key Architectural Outcomes
+1. **Zero False Positives on Clean Baseline Data**: Clean baseline tests pass with zero spurious findings due to adaptive thresholding (`thresh = min(-0.15, mean - 3.5*std)`) and ID-column exclusions.
+2. **Deterministic Cryptographic Verification**: Every audit execution produces an immutable SHA-256 canonical hash and HMAC-SHA256 signature; tampered database records are mathematically detected on demand.
+3. **Controlled Self-Healing & Verification**: Remediations are dry-run in memory, tested against policy drop thresholds, and exported to SHA-256 verifiable files.
+4. **Sub-100MB Memory Efficiency**: Completely dropping Pandas reduced peak working memory to under 75 MB for 112,650 rows, eliminating OOM risks in containerized cloud environments.

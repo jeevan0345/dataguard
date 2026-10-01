@@ -2,18 +2,28 @@
 DataGuard AI Copilot Agent
 Conversational data engineering assistant that reasons strictly over structured audit logs,
 evidence items, and quantitative detection metrics.
+
+Supports:
+1. Live Google Gemini API (gemini-2.5-flash) when GEMINI_API_KEY / GOOGLE_API_KEY is configured.
+2. High-performance deterministic evidence-grounded engine when offline or API key is unset.
 """
 
+import json
+import logging
 import os
+import urllib.error
+import urllib.request
 from typing import Any
 from app.agents.base.base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 
 class CopilotAgent(BaseAgent):
     """
     Copilot Agent for DataGuard 2.0.
     Provides natural language querying of pipeline health, findings, root causes, and fixes
-    grounded entirely in verified audit evidence using Gemini 1.5 Flash.
+    grounded entirely in verified audit evidence.
     """
 
     def __init__(self, model_name: str | None = None) -> None:
@@ -22,7 +32,13 @@ class CopilotAgent(BaseAgent):
             role="Interactive Data Engineering Assistant",
             description="Interprets natural language queries against structured audit trails, evidence, and remediation plans.",
         )
-        self.llm_model = model_name or os.getenv("LLM_MODEL", "gemini-1.5-flash")
+        self.api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if self.api_key:
+            self.llm_model = model_name or os.getenv("LLM_MODEL", "gemini-2.5-flash")
+            self.engine_mode = "gemini-api"
+        else:
+            self.llm_model = "evidence-grounded-deterministic"
+            self.engine_mode = "deterministic-rules"
 
     def run(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self.chat(*args, **kwargs)
@@ -41,8 +57,117 @@ class CopilotAgent(BaseAgent):
         - RECOMMENDATION: suggested engineering action
         - UNKNOWN: not available from current evidence
         """
-        q = query.lower().strip()
         context = audit_context or {}
+
+        # If live Gemini API key is configured, attempt real Gemini generation
+        if self.api_key:
+            gemini_result = self._call_gemini_api(query, context, system_metrics)
+            if gemini_result:
+                return gemini_result
+
+        # Otherwise (or if API call fails), use the truthful deterministic engine
+        return self._deterministic_chat(query, context, system_metrics)
+
+    def _call_gemini_api(
+        self,
+        query: str,
+        context: dict[str, Any],
+        system_metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Invokes Google Gemini API with strict structured grounding prompt.
+        """
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{self.llm_model}:generateContent?key={self.api_key}"
+
+        inspection = context.get("inspection", {})
+        findings = inspection.get("findings") if inspection.get("findings") is not None else context.get("findings", [])
+        evidence_items = context.get("evidence", {}).get("evidence", []) if isinstance(context.get("evidence"), dict) else context.get("evidence", [])
+        rca = context.get("root_cause", {})
+        recs = context.get("recommendations", {}).get("recommendations", []) if isinstance(context.get("recommendations"), dict) else context.get("recommendations", [])
+
+        # Build citations list
+        citations: list[str] = []
+        for f in (findings or [])[:4]:
+            if isinstance(f, dict) and f.get("type"):
+                citations.append(f["type"])
+
+        prompt_text = (
+            "You are the DataGuard 2.0 AI Copilot — an expert data engineering assistant.\n"
+            "You MUST ground your entire response strictly on the provided audit context below.\n"
+            "Do NOT hallucinate metrics or invent findings.\n"
+            "Format your response into EXACTLY these four markdown sections:\n"
+            "### 📊 FACT (Direct Evidence)\n"
+            "### 🔍 CANDIDATE (Diagnostic Hypothesis)\n"
+            "### 💡 RECOMMENDATION (Suggested Action)\n"
+            "### ❓ UNKNOWN (Not in Stored Evidence)\n\n"
+            f"=== AUDIT CONTEXT ===\n"
+            f"Dataset: {context.get('dataset_path', 'Active Dataset')}\n"
+            f"Row Count: {context.get('row_count', 'Unknown')}\n"
+            f"Audit Status: {context.get('audit_status', inspection.get('status', 'HEALTHY'))}\n"
+            f"Highest Severity: {context.get('highest_severity', inspection.get('highest_severity', 'NONE'))}\n"
+            f"Findings Count: {len(findings)}\n"
+            f"Findings Sample: {json.dumps(findings[:5] if findings else [])}\n"
+            f"Evidence Items: {json.dumps(evidence_items[:5] if evidence_items else [])}\n"
+            f"Root Cause Candidates: {json.dumps(rca.get('candidates', []) if rca else [])}\n"
+            f"Remediation Proposals: {json.dumps(recs[:3] if recs else [])}\n"
+            f"System Metrics: {json.dumps(system_metrics or {})}\n"
+            "=====================\n\n"
+            f"User Question: {query}\n"
+        )
+
+        request_body = {
+            "contents": [
+                {
+                    "parts": [{"text": prompt_text}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 1024,
+            },
+        }
+
+        try:
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(request_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            candidates = data.get("candidates", [])
+            if candidates:
+                content = candidates[0].get("content", {})
+                parts = content.get("parts", [])
+                if parts:
+                    reply_text = parts[0].get("text", "")
+                    return {
+                        "agent": self.name,
+                        "model": self.llm_model,
+                        "engine": "gemini-api",
+                        "query": query,
+                        "reply": reply_text,
+                        "citations": citations,
+                    }
+        except Exception as e:
+            logger.warning("Gemini API call failed (%s); falling back to deterministic engine.", e)
+            return None
+
+        return None
+
+    def _deterministic_chat(
+        self,
+        query: str,
+        context: dict[str, Any],
+        system_metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Pure deterministic evidence-grounded rules engine.
+        Executed when GEMINI_API_KEY is not configured or in offline mode.
+        """
+        q = query.lower().strip()
 
         # Normalize context extraction whether top-level or nested under inspection
         inspection = context.get("inspection", {})
@@ -90,7 +215,7 @@ class CopilotAgent(BaseAgent):
                 f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
                 f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
             )
-            return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+            return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}
 
         # 2. Root Cause / "Why did it fail?" / "What caused"
         if any(w in q for w in ["why", "cause", "reason", "diagnos", "root"]):
@@ -134,7 +259,7 @@ class CopilotAgent(BaseAgent):
                 f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
                 f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
             )
-            return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+            return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}
 
         # 3. Anomaly / Findings / Duplicates / Drift Specific
         if any(w in q for w in ["anomal", "finding", "issue", "error", "drift", "missing", "duplicate", "schema", "outlier"]):
@@ -177,7 +302,7 @@ class CopilotAgent(BaseAgent):
                 f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
                 f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
             )
-            return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+            return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}
 
         # 4. Recovery / Remediation / "How to fix"
         if any(w in q for w in ["fix", "recover", "heal", "action", "recommend", "remediat", "sql"]):
@@ -205,7 +330,7 @@ class CopilotAgent(BaseAgent):
                 f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
                 f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
             )
-            return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+            return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}
 
         # 5. Reports / Audit Documentation
         if any(w in q for w in ["report", "pdf", "excel", "download", "compliance", "certif"]):
@@ -230,7 +355,7 @@ class CopilotAgent(BaseAgent):
                 f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
                 f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
             )
-            return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+            return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}
 
         # 6. Default Fallback
         fact_section = f"- DataGuard platform is tracking dataset `{dataset}` with {len(findings)} active finding(s).\n"
@@ -251,4 +376,4 @@ class CopilotAgent(BaseAgent):
             f"### 💡 RECOMMENDATION (Suggested Action)\n{rec_section}\n"
             f"### ❓ UNKNOWN (Not in Stored Evidence)\n{unknown_section}"
         )
-        return {"agent": self.name, "model": self.llm_model, "query": query, "reply": reply, "citations": citations}
+        return {"agent": self.name, "model": self.llm_model, "engine": "deterministic-rules", "query": query, "reply": reply, "citations": citations}

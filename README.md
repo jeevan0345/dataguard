@@ -92,20 +92,39 @@ In modern cloud data architectures and enterprise analytics platforms, data pipe
 
 ---
 
-## 4. The 7 Autonomous Agents
+## 4. The 7 Autonomous Swarm Agents & Core Engines
+
+The platform coordinates a cooperative swarm of 7 specialized agents orchestrated by the `MultiAgentOrchestrator`:
 
 1. **Inspector Agent**: Unifies data quality checks (missing/empty values, duplicates), schema drift (added, removed, or mutated column types), and statistical/ML anomaly detection.
 2. **Drift Agent**: Performs two-sample Kolmogorov-Smirnov (`scipy.stats.ks_2samp`) tests comparing current batch distributions against historical baseline references.
 3. **Root Cause Agent**: Correlates multi-source symptoms (e.g. dropped columns + missing values = upstream extraction contract change) into ranked diagnostic hypotheses with confidence scores.
 4. **Recommendation Agent**: Formulates prioritized technical action plans (P0 to P3) with production-ready SQL remediation scripts.
-5. **Recovery Agent**: Formulates policy-guarded candidate actions (row deduplication, null quarantine, schema restoration) subject to strict safety rules.
-6. **Verification Engine**: Re-audits remediated datasets post-recovery to certify anomaly eradication with a signed PASS/FAIL verdict.
-7. **Reporter Agent**: Generates executive PDF audit reports and Excel workbooks with tamper-evident audit trails.
-8. **AI Copilot Agent**: Interactive conversational assistant reasoning exclusively over verified audit evidence without numerical hallucination.
+5. **Recovery Agent**: Formulates policy-guarded candidate actions (row deduplication, null quarantine, schema restoration) subject to strict safety rules, generates remediated CSVs, and issues SHA-256 integrity hashes.
+6. **Reporter Agent**: Generates executive PDF audit reports and Excel workbooks with cryptographic SHA-256 and HMAC-SHA256 signatures for tamper-evident compliance sign-off.
+7. **AI Copilot Agent**: Conversational data engineering assistant with dual-mode architecture: live Google Gemini (gemini-2.5-flash) reasoning when configured, or offline deterministic evidence-grounded reasoning.
+
+Supporting Engines:
+- **Evidence Engine**: Converts multi-agent findings into canonical structured evidence items with SHA-256 and HMAC-SHA256 digital seals.
+- **Verification Engine**: Re-audits remediated datasets post-recovery to certify anomaly eradication with a signed PASS/FAIL verdict.
 
 ---
 
-## 5. Getting Started & Installation
+## 5. Empirical Performance Benchmarks (Pandas-Free)
+
+Benchmarked on Python 3.12 (standard library `csv` + NumPy/SciPy + Scikit-Learn) on real-world Brazilian Olist datasets without Pandas:
+
+| Dataset | Record Count | Ingestion Throughput | Profiling Speed | Swarm Audit Throughput | Total Pipeline Time | Peak Heap Memory |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `olist_customers_dataset.csv` | 20,000 | 22,401 rows/s | 36,478 rows/s | 6,113 rows/s | 4.16 s | 45.55 MB |
+| `olist_customers_dataset.csv` | 99,441 | 124,152 rows/s | 35,622 rows/s | 6,231 rows/s | 16.76 s | 45.40 MB |
+| `olist_order_items_dataset.csv` | 112,650 | 91,925 rows/s | 23,368 rows/s | 5,028 rows/s | 23.63 s | 70.11 MB |
+
+*Reproducible via `python scripts/benchmark.py`.*
+
+---
+
+## 6. Getting Started & Installation
 
 ### Prerequisites
 - Python 3.12+
@@ -171,7 +190,7 @@ docker-compose up --build
 
 ---
 
-## 6. Demo Accounts & RBAC Roles
+## 7. Demo Accounts & RBAC Roles
 
 The system is pre-seeded with 3 demo accounts featuring 1-click login on the UI:
 
@@ -183,7 +202,7 @@ The system is pre-seeded with 3 demo accounts featuring 1-click login on the UI:
 
 ---
 
-## 7. Interactive Fault Simulator Scenarios
+## 8. Interactive Fault Simulator Scenarios
 
 DataGuard features an interactive pipeline simulator designed for live project demonstrations and examiner evaluations:
 
@@ -196,7 +215,7 @@ DataGuard features an interactive pipeline simulator designed for live project d
 
 ---
 
-## 8. Academic Viva & Faculty Defense Positioning
+## 9. Academic Viva & Faculty Defense Positioning
 
 - **Q: Why a Multi-Agent Swarm instead of a single script?**
   *A: Separation of concerns. Specialized agents operate independently with clear contracts, allowing inspection, diagnostic reasoning, policy-controlled self-healing, and compliance reporting to scale modularly.*
@@ -212,6 +231,6 @@ DataGuard features an interactive pipeline simulator designed for live project d
 
 ---
 
-## 9. License
+## 10. License
 
 Developed as an undergraduate final-year engineering project. Distributed under the MIT License.

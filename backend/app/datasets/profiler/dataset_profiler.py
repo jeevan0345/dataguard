@@ -1,40 +1,85 @@
-import pandas as pd
+from typing import Any
+import sys
 
 
 class DatasetProfiler:
+    """
+    Pandas-free dataset profiler for tabular data (list of row dicts).
+    """
 
     @staticmethod
-    def profile(df: pd.DataFrame):
+    def profile(data: list[dict[str, Any]] | Any) -> dict[str, Any]:
+        if not data:
+            return {
+                "rows": 0,
+                "columns": 0,
+                "column_names": [],
+                "data_types": {},
+                "missing_values": {},
+                "duplicate_rows": 0,
+                "memory_usage_mb": 0.0,
+                "numeric_columns": [],
+                "categorical_columns": [],
+            }
 
-        profile = {
+        # If data is list of dicts
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            rows = data
+            columns = list(rows[0].keys())
+        elif hasattr(data, "to_dict"):
+            rows = data.to_dict("records")
+            columns = list(rows[0].keys()) if rows else []
+        else:
+            rows = list(data)
+            columns = []
 
-            "rows": len(df),
+        total_rows = len(rows)
+        total_cols = len(columns)
 
-            "columns": len(df.columns),
+        data_types: dict[str, str] = {}
+        missing_values: dict[str, int] = {}
+        numeric_columns: list[str] = []
+        categorical_columns: list[str] = []
 
-            "column_names": list(df.columns),
+        for col in columns:
+            raw_vals = [r.get(col) for r in rows]
+            missing_count = sum(1 for v in raw_vals if v is None or str(v).strip() == "")
+            missing_values[col] = missing_count
 
-            "data_types": df.dtypes.astype(str).to_dict(),
+            # check numeric
+            valid_vals = [v for v in raw_vals if v is not None and str(v).strip() != ""]
+            is_num = False
+            if valid_vals:
+                try:
+                    for v in valid_vals:
+                        float(v)
+                    is_num = True
+                except (ValueError, TypeError):
+                    is_num = False
 
-            "missing_values": df.isnull().sum().to_dict(),
+            if is_num:
+                data_types[col] = "float64"
+                numeric_columns.append(col)
+            else:
+                data_types[col] = "object"
+                categorical_columns.append(col)
 
-            "duplicate_rows": int(df.duplicated().sum()),
+        # Duplicate rows
+        row_tuples = [tuple(r.get(col) for col in columns) for r in rows]
+        duplicate_rows = len(row_tuples) - len(set(row_tuples))
 
-          "memory_usage_mb": float(
-    round(
-        df.memory_usage(deep=True).sum() / (1024 * 1024),
-        2
-    )
-),
+        # Memory usage estimate
+        approx_bytes = sys.getsizeof(rows) + sum(sys.getsizeof(r) for r in rows)
+        memory_usage_mb = round(approx_bytes / (1024 * 1024), 2)
 
-            "numeric_columns": list(
-                df.select_dtypes(include="number").columns
-            ),
-
-            "categorical_columns": list(
-                df.select_dtypes(include="object").columns
-            )
-
+        return {
+            "rows": total_rows,
+            "columns": total_cols,
+            "column_names": columns,
+            "data_types": data_types,
+            "missing_values": missing_values,
+            "duplicate_rows": duplicate_rows,
+            "memory_usage_mb": memory_usage_mb,
+            "numeric_columns": numeric_columns,
+            "categorical_columns": categorical_columns,
         }
-
-        return profile
