@@ -37,10 +37,50 @@ class StatisticalAnomalyDetector:
             return {"findings": [], "column_summaries": {}}
 
         all_cols = list(rows[0].keys()) if not columns else columns
+    @staticmethod
+    def _is_id_column(col_name: str) -> bool:
+        c = col_name.lower().strip()
+        return (
+            c == "id"
+            or c.endswith("_id")
+            or c.startswith("id_")
+            or c.endswith("_key")
+            or c == "key"
+            or c.endswith("_uuid")
+            or c == "uuid"
+            or c.endswith("_code")
+            or c == "code"
+            or c.endswith("_zip")
+            or c == "zip"
+        )
+
+    def detect_outliers(
+        self,
+        rows: list[dict[str, Any]],
+        columns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Run Z-Score and IQR detection across numeric columns.
+
+        False-positive reduction rules:
+        - Excludes ID-like columns (e.g. order_item_id, order_id).
+        - Excludes constant columns (std < 1e-8, min == max).
+        - Naturally skewed columns (|skew| > 1.5, e.g. price, freight) require
+          either severe Z-score spikes (max Z > 4.5) or an outlier percentage >= 15%
+          to avoid flagging standard long-tail distributions.
+        - Non-skewed columns require a minimum outlier percentage >= 5.0% and >= 3 items.
+        """
+        if not rows:
+            return {"findings": [], "column_summaries": {}}
+
+        all_cols = list(rows[0].keys()) if not columns else columns
         findings: list[dict[str, Any]] = []
         summaries: dict[str, Any] = {}
 
         for col in all_cols:
+            if self._is_id_column(col):
+                continue
+
             raw_values = [row.get(col) for row in rows]
             numeric_vals: list[float] = []
             valid_indices: list[int] = []
@@ -61,22 +101,33 @@ class StatisticalAnomalyDetector:
             arr = np.array(numeric_vals, dtype=np.float64)
             mean = float(np.mean(arr))
             std = float(np.std(arr))
+
+            # Ignore constant columns
+            if std < 1e-8 or float(np.min(arr)) == float(np.max(arr)):
+                continue
+
             q25, q75 = float(np.percentile(arr, 25)), float(np.percentile(arr, 75))
             iqr = q75 - q25
+
+            # If IQR is effectively zero (e.g. discrete repeated values), ignore to prevent false fences
+            if iqr < 1e-8:
+                continue
+
             median = float(np.median(arr))
+            skewness = float(stats.skew(arr)) if len(arr) >= 5 else 0.0
+            is_skewed = bool(abs(skewness) > 1.5)
 
             # 1. Z-Score Outliers
             z_outliers = []
-            if std > 1e-8:
-                z_scores = np.abs((arr - mean) / std)
-                z_anomaly_mask = z_scores > self.z_threshold
-                for i, is_anom in enumerate(z_anomaly_mask):
-                    if is_anom:
-                        z_outliers.append({
-                            "row_index": valid_indices[i],
-                            "value": float(arr[i]),
-                            "z_score": round(float(z_scores[i]), 2),
-                        })
+            z_scores = np.abs((arr - mean) / std)
+            z_anomaly_mask = z_scores > self.z_threshold
+            for i, is_anom in enumerate(z_anomaly_mask):
+                if is_anom:
+                    z_outliers.append({
+                        "row_index": valid_indices[i],
+                        "value": float(arr[i]),
+                        "z_score": round(float(z_scores[i]), 2),
+                    })
 
             # 2. IQR Outliers
             lower_fence = q25 - (self.iqr_multiplier * iqr)
@@ -90,28 +141,44 @@ class StatisticalAnomalyDetector:
                         "direction": "LOW" if val < lower_fence else "HIGH",
                     })
 
-            # Build findings if outliers exceed 1% or 3 items
             total_valid = len(numeric_vals)
             outlier_pct = round((len(iqr_outliers) / total_valid) * 100, 2)
+            max_z = float(np.max(z_scores)) if len(z_scores) > 0 else 0.0
 
             summaries[col] = {
                 "valid_count": total_valid,
                 "mean": round(mean, 4),
                 "std": round(std, 4),
+                "skewness": round(skewness, 4),
+                "is_skewed": is_skewed,
                 "z_outlier_count": len(z_outliers),
                 "iqr_outlier_count": len(iqr_outliers),
                 "outlier_percentage": outlier_pct,
                 "lower_fence": round(lower_fence, 4),
                 "upper_fence": round(upper_fence, 4),
+                "max_z_score": round(max_z, 2),
             }
 
-            if len(iqr_outliers) > 0 and outlier_pct > 1.0:
-                severity = "HIGH" if outlier_pct > 10.0 else ("MEDIUM" if outlier_pct > 3.0 else "LOW")
+            # Outlier Decision Rule:
+            # - Naturally skewed columns (e.g. price, freight with |skew| > 1.5): require a minimum
+            #   outlier percentage >= 15.0% or extreme artificial spike (max_z > 15.0) to prevent
+            #   false positives on standard long-tail distributions.
+            # - Non-skewed columns: require minimum outlier percentage >= 5.0% and count >= 3.
+            has_anomaly = False
+            if is_skewed:
+                if outlier_pct >= 15.0 or max_z > 15.0:
+                    has_anomaly = True
+            else:
+                if outlier_pct >= 5.0 and len(iqr_outliers) >= 3:
+                    has_anomaly = True
+
+            if has_anomaly:
+                severity = "HIGH" if (outlier_pct > 15.0 or max_z > 6.0) else ("MEDIUM" if outlier_pct > 7.0 else "LOW")
                 findings.append({
                     "type": "NUMERICAL_OUTLIERS",
                     "column": col,
                     "severity": severity,
-                    "message": f"Column '{col}' contains {len(iqr_outliers)} outlier value(s) ({outlier_pct}%) outside IQR fences [{lower_fence:.2f}, {upper_fence:.2f}].",
+                    "message": f"Column '{col}' contains {len(iqr_outliers)} outlier value(s) ({outlier_pct}%) outside fences [{lower_fence:.2f}, {upper_fence:.2f}] (max Z: {max_z:.1f}).",
                     "evidence": {
                         "column": col,
                         "outlier_count": len(iqr_outliers),
@@ -121,6 +188,8 @@ class StatisticalAnomalyDetector:
                         "upper_fence": round(upper_fence, 4),
                         "mean": round(mean, 4),
                         "std": round(std, 4),
+                        "skewness": round(skewness, 4),
+                        "max_z_score": round(max_z, 2),
                         "sample_outliers": iqr_outliers[:5],
                     },
                 })

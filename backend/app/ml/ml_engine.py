@@ -19,7 +19,7 @@ class MLEngine:
         self,
         z_threshold: float = 3.0,
         iqr_multiplier: float = 1.5,
-        contamination: float = 0.05,
+        contamination: str | float = "auto",
     ) -> None:
         self.profiler = DatasetProfiler()
         self.statistical_detector = StatisticalAnomalyDetector(
@@ -39,8 +39,8 @@ class MLEngine:
         Run complete ML analysis:
         1. Statistical Profiling
         2. Univariate Statistical Detection (Z-Score & IQR)
-        3. Distribution Drift Detection (KS-Test, if reference given)
-        4. Multivariate ML Anomaly Detection (Isolation Forest)
+        3. Multivariate ML Anomaly Detection (Isolation Forest)
+        Note: Distribution Drift (KS-Test) is owned and executed once by DriftAgent.
         """
         if not rows:
             return {
@@ -56,7 +56,7 @@ class MLEngine:
         # 2. Statistical Outliers
         stat_res = self.statistical_detector.detect_outliers(rows)
 
-        # 3. Distribution Drift
+        # 3. Distribution Drift metrics (KS drift findings are owned solely by DriftAgent)
         drift_res: dict[str, Any] = {"drift_detected": False, "findings": []}
         if reference_rows and len(reference_rows) >= 10:
             drift_res = self.statistical_detector.detect_distribution_drift(
@@ -67,10 +67,9 @@ class MLEngine:
         # 4. Multivariate Isolation Forest
         if_res = self.isolation_forest.detect(rows)
 
-        # 5. Collect all ML findings
+        # 5. Collect ML findings (Univariate Outliers + Multivariate Isolation Forest; DriftAgent owns drift)
         all_findings: list[dict[str, Any]] = []
         all_findings.extend(stat_res.get("findings", []))
-        all_findings.extend(drift_res.get("findings", []))
         all_findings.extend(if_res.get("findings", []))
 
         status = "ANOMALY_DETECTED" if all_findings else "HEALTHY"

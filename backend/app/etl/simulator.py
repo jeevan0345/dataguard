@@ -38,17 +38,23 @@ class ETLSimulator:
         if not all_rows:
             raise ValueError(f"Failed to load dataset at {dataset_path}")
 
-        # Take reproducible sample
-        sample_rows = [copy.deepcopy(r) for r in all_rows[:sample_size]]
+        # Take reproducible sample from pristine rows for deterministic baseline behavior
+        clean_candidates = [
+            r for r in all_rows
+            if not any(v is None or str(v).strip() == "" for v in r.values())
+        ]
+        source_pool = clean_candidates if len(clean_candidates) >= sample_size else all_rows
+        sample_rows = [copy.deepcopy(r) for r in source_pool[:sample_size]]
+
         actual_schema = SchemaInference.infer_schema(sample_rows)
         expected_schema = copy.deepcopy(actual_schema)
 
         injected_faults = []
 
         if mode == "MISSING_VALUES" or mode == "DISASTER":
-            # Inject nulls into first column
+            # Inject nulls into second column (20% nulls)
             target_col = list(sample_rows[0].keys())[1]
-            for i in range(0, len(sample_rows), 5):  # 20% nulls
+            for i in range(0, len(sample_rows), 5):
                 sample_rows[i][target_col] = None
             injected_faults.append(f"Injected 20% missing values in column '{target_col}'")
 
@@ -66,13 +72,22 @@ class ETLSimulator:
             injected_faults.append(f"Removed expected column '{col_to_remove}' from pipeline output")
 
         if mode == "ML_OUTLIERS" or mode == "DISASTER":
-            # Find a numeric column or price/freight and inject 1000x multiplier
+            # Find a non-ID numeric column or inject a numeric feature if none exists
+            target_numeric = None
             for col, dtype in actual_schema.items():
-                if dtype in ["integer", "float"]:
-                    for i in range(5):
-                        sample_rows[i][col] = 999999.99
-                    injected_faults.append(f"Injected extreme numerical outliers in column '{col}'")
+                if dtype in ["integer", "float"] and not (col.endswith("_id") or col == "id"):
+                    target_numeric = col
                     break
+            if not target_numeric:
+                target_numeric = "freight_value"
+                for r in sample_rows:
+                    r[target_numeric] = 15.50
+                actual_schema[target_numeric] = "float"
+                expected_schema[target_numeric] = "float"
+
+            for i in range(5):
+                sample_rows[i][target_numeric] = 999999.99
+            injected_faults.append(f"Injected extreme numerical outliers in column '{target_numeric}'")
 
         # Run MultiAgentOrchestrator
         orchestrator = MultiAgentOrchestrator()

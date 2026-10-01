@@ -165,7 +165,20 @@ class MultiAgentOrchestrator:
             # Merge drift findings into inspector findings
             if drift_res.get("findings"):
                 inspector_res["findings"].extend(drift_res["findings"])
-                inspector_res["finding_count"] = len(inspector_res["findings"])
+
+        # Deduplicate findings by (type, column)
+        deduped_findings: list[dict[str, Any]] = []
+        seen_keys: set[tuple[Any, Any]] = set()
+        for f in inspector_res.get("findings", []):
+            key = (f.get("type"), f.get("column"))
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped_findings.append(f)
+        inspector_res["findings"] = deduped_findings
+        inspector_res["finding_count"] = len(deduped_findings)
+        inspector_res["status"] = "HEALTHY" if not deduped_findings else "ANOMALY_DETECTED"
+        if not deduped_findings:
+            inspector_res["highest_severity"] = "NONE"
 
         # 3. Evidence Engine
         evidence_res = self.evidence_builder.build(inspector_res)
