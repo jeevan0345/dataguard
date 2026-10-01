@@ -129,10 +129,14 @@ export const api = {
       return res.data;
     },
     getReportDownloadUrl: (filename: string) => {
-      return `${API_BASE_URL}/agents/reports/download/${filename}`;
+      const token = localStorage.getItem('dataguard_token');
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
+      return `${API_BASE_URL}/agents/reports/download/${filename}${query}`;
     },
     getRemediatedDownloadUrl: (recoveryRunId: string) => {
-      return `${API_BASE_URL}/agents/recovery/download/${recoveryRunId}`;
+      const token = localStorage.getItem('dataguard_token');
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
+      return `${API_BASE_URL}/agents/recovery/download/${recoveryRunId}${query}`;
     },
   },
 

@@ -5,7 +5,7 @@ Extracts and validates JWT bearer tokens, enforcing role-based permissions.
 
 from typing import Callable
 from uuid import UUID
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -18,20 +18,26 @@ security_scheme = HTTPBearer(auto_error=False)
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+    token: str | None = Query(None, description="Optional JWT bearer token for direct browser file downloads"),
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Extracts and authenticates the user from JWT bearer token.
+    Extracts and authenticates the user from JWT bearer token (via Authorization Header or Query parameter).
     """
-    if not credentials:
+    raw_token = None
+    if credentials and credentials.credentials:
+        raw_token = credentials.credentials
+    elif token:
+        raw_token = token
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token missing. Please log in.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credentials.credentials
-    payload = decode_access_token(token)
+    payload = decode_access_token(raw_token)
 
     if not payload or "sub" not in payload:
         raise HTTPException(

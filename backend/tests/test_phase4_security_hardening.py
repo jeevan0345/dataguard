@@ -86,8 +86,23 @@ class TestPhase4SecurityHardening(unittest.TestCase):
             "/agents/reports/download/../../../../windows/system32/cmd.exe",
             headers={"Authorization": f"Bearer {self.token}"},
         )
-        # Should be rejected with 404 or 403
+        # Should be rejected with 403 or 404
         self.assertIn(resp.status_code, [403, 404])
+
+    def test_report_download_with_query_token_authentication(self):
+        """
+        Downloading reports with ?token= query parameter authenticates successfully.
+        Without token, returns 401 Unauthorized.
+        """
+        # Without token -> 401 Unauthorized
+        resp_no_token = self.client.get("/agents/reports/download/nonexistent_test_report.pdf")
+        self.assertEqual(resp_no_token.status_code, 401)
+        self.assertIn("Authentication token missing", resp_no_token.json()["detail"])
+
+        # With query token -> Authenticated (returns 404 because nonexistent, not 401!)
+        resp_with_token = self.client.get(f"/agents/reports/download/nonexistent_test_report.pdf?token={self.token}")
+        self.assertEqual(resp_with_token.status_code, 404)
+        self.assertIn("Requested report file does not exist", resp_with_token.json()["detail"])
 
 
 if __name__ == "__main__":
