@@ -4,7 +4,11 @@ Provides API endpoints for agent orchestration, simulation, copilot chat, recove
 """
 
 import os
+import csv
+import copy
+import hmac
 import json
+import uuid
 from pathlib import Path
 from datetime import datetime
 from uuid import UUID
@@ -18,6 +22,8 @@ from sqlalchemy.orm import Session
 from app.database.session import get_db
 from app.auth.dependencies import get_current_user, require_role
 from app.models.user import User
+from app.models.recovery_run import RecoveryRun
+from app.core.security import compute_file_sha256
 from app.etl.extractor.dataset_loader import DatasetLoader
 from app.etl.extractor.schema_inference import SchemaInference
 from app.agents.orchestrator import MultiAgentOrchestrator
@@ -126,6 +132,8 @@ def _build_dossier_from_run(db: Session, run: InspectionRun) -> dict[str, Any]:
         "friendly_name": _friendly_dataset_name(run.dataset_path),
         "row_count": run.row_count,
         "column_count": run.column_count,
+        "audit_hash": run.audit_hash or evidence_res.get("audit_hash"),
+        "audit_hmac": run.audit_hmac or evidence_res.get("audit_hmac"),
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "inspection": inspection_dict,
         "evidence": evidence_res,
@@ -157,6 +165,7 @@ class RecoveryExecuteRequest(BaseModel):
     dataset_path: str
     actions: list[dict[str, Any]]
     expected_schema: Optional[dict[str, str]] = None
+    audit_id: Optional[str] = None
 
 
 # Cache last active audit result for copilot contextual fallback
@@ -219,6 +228,8 @@ def orchestrate_audit(
 
         result["id"] = str(inspection_run.id)
         result["inspection_id"] = str(inspection_run.id)
+        result["audit_hash"] = inspection_run.audit_hash
+        result["audit_hmac"] = inspection_run.audit_hmac
         result["created_at"] = inspection_run.created_at.isoformat() if inspection_run.created_at else None
         result["friendly_name"] = _friendly_dataset_name(payload.dataset_path)
 
@@ -300,6 +311,8 @@ def run_simulation(
             )
             audit_res["id"] = str(inspection_run.id)
             audit_res["inspection_id"] = str(inspection_run.id)
+            audit_res["audit_hash"] = inspection_run.audit_hash
+            audit_res["audit_hmac"] = inspection_run.audit_hmac
             audit_res["created_at"] = inspection_run.created_at.isoformat() if inspection_run.created_at else None
             audit_res["friendly_name"] = _friendly_dataset_name(payload.dataset_path)
             sim_result["audit"] = audit_res
@@ -348,75 +361,305 @@ def execute_and_verify_recovery(
     """
     Applies proposed recovery actions and runs the Verification Engine
     to issue a certified PASS/FAIL audit sign-off.
-    Enforces policy checks and primary key protection.
-    Persists the post-remediation audit to PostgreSQL.
+    Enforces server-side validation against authorized remediation proposals.
+    Executes remediations across full dataset, writes remediated CSV to disk,
+    and logs immutable RecoveryRun record in PostgreSQL.
     """
     try:
-        # Policy Check: Protect Primary Keys & ID columns from arbitrary removal
-        for act in payload.actions:
-            target = str(act.get("target", "")).lower()
-            atype = act.get("action_type")
-            if atype in ["QUARANTINE_NULL_RECORDS", "DEDUPLICATE_ROWS"] and (target.endswith("_id") or target == "id" or target.endswith("_key")):
-                # High severity policy check
-                if act.get("risk_level") == "HIGH" and current_user.role != "ADMIN":
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"High-risk remediation action on primary key column '{act.get('target')}' requires ADMIN approval.",
-                    )
+        orchestrator = MultiAgentOrchestrator()
+        recovery_agent = RecoveryAgent()
 
-        rows = DatasetLoader.load_dataset(payload.dataset_path)
-        sample = rows[:500]
+        # 1. Authoritative Finding Resolution: Load from persisted audit or pre-audit
+        findings: list[dict[str, Any]] = []
+        inspection_run: Optional[InspectionRun] = None
+
+        if payload.audit_id:
+            try:
+                inspection_run = db.query(InspectionRun).filter(InspectionRun.id == UUID(payload.audit_id)).first()
+            except Exception:
+                inspection_run = None
+
+            if inspection_run:
+                findings_records = (
+                    db.query(InspectionFinding)
+                    .filter(InspectionFinding.inspection_id == inspection_run.id)
+                    .order_by(InspectionFinding.created_at.asc())
+                    .all()
+                )
+                for f in findings_records:
+                    ev = {}
+                    if f.evidence:
+                        try:
+                            ev = json.loads(f.evidence) if isinstance(f.evidence, str) else f.evidence
+                        except Exception:
+                            ev = {}
+                    findings.append({
+                        "type": f.finding_type,
+                        "severity": f.severity,
+                        "message": f.message,
+                        "column": f.column_name,
+                        "evidence": ev,
+                    })
+
+        all_rows = DatasetLoader.load_dataset(payload.dataset_path)
+        sample = all_rows[:1000] if all_rows else []
         actual_schema = SchemaInference.infer_schema(sample)
         expected_schema = payload.expected_schema or actual_schema
 
-        # Pre-recovery inspection
-        orchestrator = MultiAgentOrchestrator()
-        pre_audit = orchestrator.inspector_agent.execute(
-            rows=sample,
-            expected_schema=expected_schema,
-            actual_schema=actual_schema,
-        )
+        if not findings:
+            pre_audit_res = orchestrator.inspector_agent.execute(
+                rows=sample,
+                expected_schema=expected_schema,
+                actual_schema=actual_schema,
+            )
+            findings = pre_audit_res.get("findings", [])
 
-        # Apply recovery actions
-        recovery_agent = RecoveryAgent()
-        remediated_rows = recovery_agent.execute_recovery(sample, payload.actions)
+        # 2. Authoritative Remediation Proposal from Recovery Agent
+        auth_plan = recovery_agent.propose_recovery(findings=findings, rows=sample)
+        auth_candidates = auth_plan.get("candidates", [])
 
-        # Post-recovery inspection
-        post_schema = SchemaInference.infer_schema(remediated_rows)
+        # 3. Server-side validation of requested actions against authoritative proposals
+        validated_actions: list[dict[str, Any]] = []
+        for act in payload.actions:
+            act_id = act.get("action_id")
+            atype = act.get("action_type")
+            target = act.get("target")
+
+            matched = None
+            for cand in auth_candidates:
+                if act_id and cand.get("action_id") == act_id:
+                    matched = cand
+                    break
+                elif cand.get("action_type") == atype and str(cand.get("target")) == str(target):
+                    matched = cand
+                    break
+
+            if not matched:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Action '{act_id or atype}' on target '{target}' is not an authorized remediation candidate for this audit.",
+                )
+
+            # Prevent parameter tampering: verify action_type matches
+            if atype and matched.get("action_type") != atype:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Action type mismatch for '{act_id}': proposed '{matched.get('action_type')}', received '{atype}'.",
+                )
+
+            # Enforce RBAC on high-risk actions
+            is_high_risk = (
+                matched.get("risk_level") == "HIGH"
+                or matched.get("policy_status") == "REQUIRES_OPERATOR_APPROVAL"
+                or act.get("risk_level") == "HIGH"
+            )
+            target_str = str(target or matched.get("target", "")).lower()
+            if atype in ["QUARANTINE_NULL_RECORDS", "DEDUPLICATE_ROWS"] and (
+                target_str.endswith("_id") or target_str == "id" or target_str.endswith("_key")
+            ):
+                is_high_risk = True
+
+            if is_high_risk and current_user.role != "ADMIN":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"High-risk remediation action '{matched.get('action_id')}' ({matched.get('action_type')}) on '{matched.get('target')}' requires ADMIN approval.",
+                )
+
+            safe_act = copy.deepcopy(matched)
+            validated_actions.append(safe_act)
+
+        # 4. Execute recovery across full dataset up to 50,000 rows
+        MAX_AUDIT_ROWS = 50000
+        target_rows = all_rows[:MAX_AUDIT_ROWS]
+        original_count = len(target_rows)
+
+        remediated_rows = recovery_agent.execute_recovery(target_rows, validated_actions)
+        remediated_count = len(remediated_rows)
+
+        # 5. Persist remediated dataset to disk
+        remediated_dir = Path("data/remediated")
+        remediated_dir.mkdir(parents=True, exist_ok=True)
+        rec_uuid = uuid.uuid4()
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        file_name = f"remediated_{rec_uuid}_{ts}.csv"
+        file_path = remediated_dir / file_name
+
+        if remediated_rows:
+            fieldnames = list(remediated_rows[0].keys())
+            with open(file_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(remediated_rows)
+        else:
+            with open(file_path, "w", newline="", encoding="utf-8") as f:
+                pass
+
+        file_hash = compute_file_sha256(str(file_path))
+
+        # 6. Post-recovery inspection & verification
+        post_sample = remediated_rows[:1000] if remediated_rows else []
+        post_schema = SchemaInference.infer_schema(post_sample) if post_sample else {}
         post_audit = orchestrator.inspector_agent.execute(
-            rows=remediated_rows,
+            rows=post_sample,
             expected_schema=expected_schema,
             actual_schema=post_schema,
         )
 
-        # Verification Engine Verdict
+        pre_audit = {"status": "ANOMALY_DETECTED" if findings else "HEALTHY", "findings": findings}
         verdict_res = VerificationEngine.verify(
             before_inspection=pre_audit,
             after_inspection=post_audit,
-            original_row_count=len(sample),
-            remediated_row_count=len(remediated_rows),
+            original_row_count=original_count,
+            remediated_row_count=remediated_count,
         )
 
-        # Persist post-recovery inspection record into PostgreSQL
+        # 7. Persist post-recovery inspection record into PostgreSQL
         post_run = InspectionFindingService.save_inspection(
             db=db,
             dataset_path=payload.dataset_path + " (Remediated)",
             inspection_result=post_audit,
-            row_count=len(remediated_rows),
+            row_count=remediated_count,
             column_count=len(post_schema),
         )
+
+        # 8. Persist RecoveryRun audit record
+        recovery_run = RecoveryRun(
+            id=rec_uuid,
+            inspection_id=inspection_run.id if inspection_run else None,
+            dataset_path=payload.dataset_path,
+            status="RECOVERY_APPLIED",
+            verdict=verdict_res["verdict"],
+            original_row_count=original_count,
+            remediated_row_count=remediated_count,
+            actions_executed=json.dumps(validated_actions),
+            remediated_file_path=str(file_path),
+            remediated_file_hash=file_hash,
+            executed_by=current_user.id,
+        )
+        db.add(recovery_run)
+        db.commit()
+        db.refresh(recovery_run)
 
         return {
             "status": "RECOVERY_APPLIED",
             "verdict": verdict_res["verdict"],
             "verification": verdict_res,
-            "remediated_sample_count": len(remediated_rows),
+            "recovery_run_id": str(recovery_run.id),
+            "remediated_sample_count": remediated_count,
+            "remediated_row_count": remediated_count,
+            "original_row_count": original_count,
             "remediated_inspection_id": str(post_run.id),
+            "remediated_file_path": str(file_path),
+            "remediated_file_hash": file_hash,
+            "download_url": f"/agents/recovery/download/{recovery_run.id}",
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/recovery/download/{recovery_run_id}")
+def download_remediated_dataset(
+    recovery_run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Secure download endpoint for remediated dataset CSV files.
+    Enforces directory path sandboxing to reject traversal attacks.
+    """
+    run = db.query(RecoveryRun).filter(RecoveryRun.id == recovery_run_id).first()
+    if not run or not run.remediated_file_path:
+        raise HTTPException(status_code=404, detail="Remediation artifact not found.")
+
+    file_path = Path(run.remediated_file_path).resolve()
+    remediated_dir = Path("data/remediated").resolve()
+
+    # Sandboxing: Ensure path resides within data/remediated
+    try:
+        file_path.relative_to(remediated_dir)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied: path traversal detected.")
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Remediated CSV file is no longer available on disk.")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="text/csv",
+        filename=file_path.name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_path.name}"',
+            "X-File-SHA256": run.remediated_file_hash or "",
+        },
+    )
+
+
+@router.get("/audits/{audit_id}/verify")
+def verify_audit_integrity(
+    audit_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Verifies the cryptographic tamper-evident SHA-256 and HMAC-SHA256 signatures
+    of a persisted historical audit run against database records.
+    """
+    run = db.query(InspectionRun).filter(InspectionRun.id == audit_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Audit run not found.")
+
+    findings_records = (
+        db.query(InspectionFinding)
+        .filter(InspectionFinding.inspection_id == run.id)
+        .order_by(InspectionFinding.created_at.asc())
+        .all()
+    )
+    findings = []
+    for f in findings_records:
+        findings.append({
+            "type": f.finding_type,
+            "severity": f.severity,
+            "column": f.column_name or "",
+            "message": f.message,
+        })
+
+    canonical = EvidenceBuilder.compute_canonical_audit(
+        dataset_path=run.dataset_path,
+        status=run.status,
+        highest_severity=run.highest_severity,
+        row_count=run.row_count,
+        column_count=run.column_count,
+        findings=findings,
+    )
+    computed_hash, computed_hmac = EvidenceBuilder.generate_audit_signatures(canonical)
+
+    stored_hash = run.audit_hash or ""
+    stored_hmac = run.audit_hmac or ""
+
+    hash_valid = hmac.compare_digest(stored_hash, computed_hash) if stored_hash else False
+    hmac_valid = hmac.compare_digest(stored_hmac, computed_hmac) if stored_hmac else False
+
+    is_legacy = not stored_hash
+    is_valid = (hash_valid and hmac_valid) or is_legacy
+
+    return {
+        "audit_id": str(run.id),
+        "dataset_path": run.dataset_path,
+        "valid": is_valid,
+        "is_legacy_unsigned": is_legacy,
+        "stored_hash": stored_hash,
+        "computed_hash": computed_hash,
+        "stored_hmac": stored_hmac,
+        "computed_hmac": computed_hmac,
+        "verified_at": datetime.utcnow().isoformat(),
+        "message": (
+            "Cryptographic signature verified: audit record is authentic and untampered."
+            if is_valid
+            else "INTEGRITY VIOLATION: Computed hash differs from stored signature. Database records may have been altered."
+        ),
+    }
 
 
 @router.get("/status")

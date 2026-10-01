@@ -108,8 +108,8 @@ export const api = {
       const res = await apiClient.post('/agents/copilot/chat', { query, context });
       return res.data;
     },
-    executeRecovery: async (dataset_path: string, actions: any[]) => {
-      const res = await apiClient.post('/agents/recovery/execute', { dataset_path, actions });
+    executeRecovery: async (dataset_path: string, actions: any[], audit_id?: string) => {
+      const res = await apiClient.post('/agents/recovery/execute', { dataset_path, actions, audit_id });
       return res.data;
     },
     getAlerts: async (): Promise<{ count: number; alerts: Alert[] }> => {
@@ -130,6 +130,9 @@ export const api = {
     },
     getReportDownloadUrl: (filename: string) => {
       return `${API_BASE_URL}/agents/reports/download/${filename}`;
+    },
+    getRemediatedDownloadUrl: (recoveryRunId: string) => {
+      return `${API_BASE_URL}/agents/recovery/download/${recoveryRunId}`;
     },
   },
 

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inspection_finding import InspectionFinding
 from app.models.inspection_run import InspectionRun
+from app.evidence.evidence_builder import EvidenceBuilder
 
 
 class InspectionFindingService:
@@ -27,30 +28,38 @@ class InspectionFindingService:
         column_count: int,
     ) -> InspectionRun:
         """
-        Save one complete inspection and all of its findings.
+        Save one complete inspection and all of its findings with cryptographic signatures.
 
         Existing findings are not reused. Each inspection execution
         creates a new InspectionRun, preserving the audit history.
         """
+        status = inspection_result.get("status", "UNKNOWN")
+        highest_severity = inspection_result.get("highest_severity")
+        findings = inspection_result.get("findings", [])
+
+        # Compute cryptographic tamper-evident signatures
+        canonical = EvidenceBuilder.compute_canonical_audit(
+            dataset_path=dataset_path,
+            status=status,
+            highest_severity=highest_severity,
+            row_count=row_count,
+            column_count=column_count,
+            findings=findings,
+        )
+        audit_hash, audit_hmac = EvidenceBuilder.generate_audit_signatures(canonical)
 
         inspection_run = InspectionRun(
             dataset_path=dataset_path,
-            status=inspection_result.get(
-                "status",
-                "UNKNOWN",
-            ),
-            highest_severity=inspection_result.get(
-                "highest_severity",
-            ),
+            status=status,
+            highest_severity=highest_severity,
             row_count=row_count,
             column_count=column_count,
-            finding_count=inspection_result.get(
-                "finding_count",
-                0,
-            ),
+            finding_count=len(findings),
             summary=InspectionFindingService._build_summary(
                 inspection_result,
             ),
+            audit_hash=audit_hash,
+            audit_hmac=audit_hmac,
         )
 
         db.add(inspection_run)

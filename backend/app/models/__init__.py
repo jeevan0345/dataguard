@@ -13,6 +13,7 @@ from .inspection_run import InspectionRun
 from .inspection_finding import InspectionFinding
 from .user import User
 from .dataset_baseline import DatasetBaseline
+from .recovery_run import RecoveryRun
 
 
 # ETL models will be added later

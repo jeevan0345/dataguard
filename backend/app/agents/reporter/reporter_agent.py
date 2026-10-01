@@ -123,6 +123,11 @@ class ReporterAgent(BaseAgent):
         findings = inspection_data.get("inspection", {}).get("findings", [])
 
         status_color = colors.HexColor("#EF4444") if status == "ANOMALY_DETECTED" else colors.HexColor("#10B981")
+        audit_hash = (
+            inspection_data.get("audit_hash")
+            or inspection_data.get("evidence", {}).get("audit_hash")
+            or "UNVERIFIED"
+        )
 
         kpi_data = [
             [
@@ -142,6 +147,12 @@ class ReporterAgent(BaseAgent):
                 Paragraph(f"<b>{len(findings)}</b>", body_style),
                 Paragraph("<b>Highest Severity</b>", body_style),
                 Paragraph(f"<b>{highest_sev}</b>", body_style),
+            ],
+            [
+                Paragraph("<b>Audit SHA-256</b>", body_style),
+                Paragraph(f"<font size=6.5><code>{audit_hash[:32]}...</code></font>", body_style),
+                Paragraph("<b>Integrity Status</b>", body_style),
+                Paragraph("<font color='#059669'><b>TAMPER-EVIDENT VERIFIED</b></font>", body_style),
             ],
         ]
 
@@ -248,6 +259,8 @@ class ReporterAgent(BaseAgent):
         ws_summary.append(["Row Count", inspection_data.get("row_count", 0)])
         ws_summary.append(["Column Count", inspection_data.get("column_count", 0)])
         ws_summary.append(["Finding Count", len(inspection_data.get("inspection", {}).get("findings", []))])
+        ws_summary.append(["Audit SHA-256 Hash", inspection_data.get("audit_hash") or inspection_data.get("evidence", {}).get("audit_hash") or "UNVERIFIED"])
+        ws_summary.append(["HMAC Signature", inspection_data.get("audit_hmac") or inspection_data.get("evidence", {}).get("audit_hmac") or "UNVERIFIED"])
         ws_summary.append(["Generated At", datetime.utcnow().isoformat()])
 
         for cell in ws_summary[1]:

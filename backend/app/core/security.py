@@ -3,6 +3,9 @@ DataGuard Security & Cryptography
 Password hashing with native bcrypt and JWT bearer tokens with python-jose.
 """
 
+import hashlib
+import hmac
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Any
@@ -64,3 +67,33 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
         return payload
     except JWTError:
         return None
+
+
+def compute_canonical_hash(payload: Any) -> str:
+    """
+    Computes deterministic SHA-256 hex digest of a JSON-serializable object
+    using canonical formatting (sorted keys, compact separators).
+    """
+    canonical_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(canonical_bytes).hexdigest()
+
+
+def compute_canonical_hmac(payload: Any, secret: str = SECRET_KEY) -> str:
+    """
+    Computes HMAC-SHA256 hex digest of a JSON-serializable object using
+    the secret key.
+    """
+    canonical_bytes = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), canonical_bytes, hashlib.sha256).hexdigest()
+
+
+def compute_file_sha256(filepath: str) -> str:
+    """
+    Computes SHA-256 hex digest of a file on disk.
+    """
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+

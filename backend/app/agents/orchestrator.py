@@ -210,6 +210,8 @@ class MultiAgentOrchestrator:
             "root_cause": rca_res,
             "recommendations": rec_res.get("recommendations", []),
             "recovery": recovery_res,
+            "audit_hash": evidence_res.get("audit_hash"),
+            "audit_hmac": evidence_res.get("audit_hmac"),
         }
         alerts = NotificationService.emit_inspection_alerts(payload)
 
@@ -224,6 +226,8 @@ class MultiAgentOrchestrator:
             "dataset_path": dataset_path,
             "row_count": len(rows),
             "column_count": len(rows[0].keys()) if rows else 0,
+            "audit_hash": evidence_res.get("audit_hash"),
+            "audit_hmac": evidence_res.get("audit_hmac"),
             "inspection": inspector_res,
             "drift": drift_res,
             "evidence": evidence_res,

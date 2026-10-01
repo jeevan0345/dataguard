@@ -53,6 +53,17 @@ class InspectionRun(Base):
         nullable=True,
     )
 
+    audit_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        index=True,
+    )
+
+    audit_hmac: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+    )
+
     findings = relationship(
         "InspectionFinding",
         back_populates="inspection_run",

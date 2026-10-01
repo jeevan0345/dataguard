@@ -15,6 +15,8 @@ import {
   GitBranch,
   BookmarkCheck,
   CheckCircle2,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 
 interface FindingsViewProps {
@@ -31,6 +33,8 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
   const [localDossier, setLocalDossier] = useState<AuditDossier | null>(dossier);
   const [settingBaseline, setSettingBaseline] = useState<boolean>(false);
   const [baselineMessage, setBaselineMessage] = useState<string | null>(null);
+  const [verifyingHash, setVerifyingHash] = useState<boolean>(false);
+  const [verificationResult, setVerificationResult] = useState<any | null>(null);
 
   useEffect(() => {
     setLocalDossier(dossier);
@@ -91,6 +95,23 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
       setTimeout(() => setBaselineMessage(null), 5000);
     } finally {
       setSettingBaseline(false);
+    }
+  };
+
+  const handleVerifyIntegrity = async () => {
+    if (!currentDossier?.id) return;
+    setVerifyingHash(true);
+    setVerificationResult(null);
+    try {
+      const res = await api.agents.verifyAuditHash(currentDossier.id);
+      setVerificationResult(res);
+    } catch (err: any) {
+      setVerificationResult({
+        valid: false,
+        message: `Verification request failed: ${err.response?.data?.detail || err.message}`,
+      });
+    } finally {
+      setVerifyingHash(false);
     }
   };
 
@@ -207,18 +228,67 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
               <div>Columns: <span className="text-slate-300">{currentDossier.column_count}</span></div>
               <div>Status: <span className="text-emerald-400 font-bold">{currentDossier.audit_status}</span></div>
               {currentDossier.id && (
-                <button
-                  onClick={handleSetBaseline}
-                  disabled={settingBaseline}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-50 transition text-xs font-semibold cursor-pointer"
-                  title="Designate this audit as the authoritative baseline for schema and drift comparison"
-                >
-                  <BookmarkCheck className="w-3.5 h-3.5" />
-                  <span>{settingBaseline ? 'Saving...' : 'Set as Baseline'}</span>
-                </button>
+                <>
+                  <button
+                    onClick={handleVerifyIntegrity}
+                    disabled={verifyingHash}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 border border-blue-500/30 hover:bg-blue-600/30 disabled:opacity-50 transition text-xs font-semibold cursor-pointer"
+                    title="Verify SHA-256 and HMAC cryptographic signatures against database records"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>{verifyingHash ? 'Verifying...' : 'Verify Signature'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleSetBaseline}
+                    disabled={settingBaseline}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-50 transition text-xs font-semibold cursor-pointer"
+                    title="Designate this audit as the authoritative baseline for schema and drift comparison"
+                  >
+                    <BookmarkCheck className="w-3.5 h-3.5" />
+                    <span>{settingBaseline ? 'Saving...' : 'Set as Baseline'}</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
+
+          {verificationResult && (
+            <div
+              className={`p-4 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs ${
+                verificationResult.valid
+                  ? 'bg-blue-950/40 border-blue-500/30 text-blue-300'
+                  : 'bg-red-950/40 border-red-500/30 text-red-300'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <Lock className={`w-5 h-5 shrink-0 mt-0.5 ${verificationResult.valid ? 'text-blue-400' : 'text-red-400'}`} />
+                <div>
+                  <div className="font-bold flex items-center gap-2">
+                    <span>{verificationResult.valid ? 'Cryptographic Integrity Verified' : 'Integrity Verification Failed'}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase ${
+                      verificationResult.valid ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'
+                    }`}>
+                      {verificationResult.valid ? 'VALID SHA-256' : 'MISMATCH'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{verificationResult.message}</p>
+                  {verificationResult.computed_hash && (
+                    <div className="mt-2 font-mono text-[10px] text-slate-400 break-all">
+                      <span>SHA-256: </span>
+                      <span className="text-slate-200">{verificationResult.computed_hash}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setVerificationResult(null)}
+                className="text-xs text-slate-400 hover:text-white self-start md:self-center bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/50"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {baselineMessage && (
             <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">

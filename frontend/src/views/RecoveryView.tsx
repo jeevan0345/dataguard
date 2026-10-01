@@ -14,6 +14,7 @@ import {
   Database,
   Lock,
   FileCheck,
+  Download,
 } from 'lucide-react';
 
 interface RecoveryViewProps {
@@ -25,6 +26,8 @@ interface RecoveryViewProps {
 export const RecoveryView: React.FC<RecoveryViewProps> = ({ dossier, onNavigate, onDossierUpdated }) => {
   const [executing, setExecuting] = useState(false);
   const [verification, setVerification] = useState<VerificationResult | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [remediatedHash, setRemediatedHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [audits, setAudits] = useState<AuditSummaryItem[]>([]);
   const [localDossier, setLocalDossier] = useState<AuditDossier | null>(dossier);
@@ -82,9 +85,15 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ dossier, onNavigate,
     if (!currentDossier) return;
     setExecuting(true);
     setError(null);
+    setDownloadUrl(null);
+    setRemediatedHash(null);
     try {
-      const res = await api.agents.executeRecovery(currentDossier.dataset_path, candidates);
+      const res = await api.agents.executeRecovery(currentDossier.dataset_path, candidates, currentDossier.id);
       setVerification(res.verification);
+      if (res.recovery_run_id) {
+        setDownloadUrl(api.agents.getRemediatedDownloadUrl(res.recovery_run_id));
+        setRemediatedHash(res.remediated_file_hash);
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Recovery execution failed.');
     } finally {
@@ -260,6 +269,28 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ dossier, onNavigate,
                   </div>
                 </div>
               </div>
+
+              {downloadUrl && (
+                <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <FileCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>Remediated Clean CSV generated and cryptographic SHA-256 registered.</span>
+                    {remediatedHash && (
+                      <span className="text-[10px] font-mono text-slate-500 hidden md:inline">
+                        ({remediatedHash.slice(0, 16)}...)
+                      </span>
+                    )}
+                  </div>
+                  <a
+                    href={downloadUrl}
+                    download
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Remediated CSV</span>
+                  </a>
+                </div>
+              )}
             </div>
           )}
 
