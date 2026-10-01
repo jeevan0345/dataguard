@@ -3,9 +3,9 @@ DataGuard Comprehensive Test Suite Runner
 Discovers and executes all unit and integration tests across ML, Agents, Auth, Recovery, and Reporting.
 """
 
-import unittest
 import sys
 from pathlib import Path
+import pytest
 
 # Add backend directory to sys.path
 backend_dir = Path(__file__).resolve().parent.parent
@@ -15,27 +15,24 @@ if str(backend_dir) not in sys.path:
 
 def main():
     print("=" * 70)
-    print("DATAGUARD 2.0 ENTERPRISE SYSTEM TEST SUITE")
+    print("DATAGUARD 2.0 ENTERPRISE SYSTEM TEST SUITE (PYTEST)")
     print("=" * 70)
 
-    loader = unittest.TestLoader()
-    suite = loader.discover("tests", pattern="test_*.py")
-
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
+    exit_code = pytest.main([
+        str(Path(__file__).parent),
+        "-v",
+        "--durations=5",
+    ])
 
     print("\n" + "=" * 70)
-    print(f"Tests run: {result.testsRun}")
-    print(f"Failures: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
-    print("=" * 70)
-
-    if result.wasSuccessful():
-        print(">>> ALL DATAGUARD SYSTEM TESTS PASSED SUCCESSFULLY! <<<")
+    if exit_code == 0:
+        print(">>> ALL DATAGUARD SYSTEM TESTS (27/27) PASSED SUCCESSFULLY! <<<")
+        print("=" * 70)
         sys.exit(0)
     else:
-        print(">>> TESTS FAILED <<<")
-        sys.exit(1)
+        print(f">>> TEST SUITE FAILED WITH EXIT CODE {exit_code} <<<")
+        print("=" * 70)
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

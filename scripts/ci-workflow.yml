@@ -1,0 +1,97 @@
+name: DataGuard CI Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-test:
+    name: Backend Tests & Security Verification
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: dataguard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/dataguard
+      SECRET_KEY: test_dataguard_secret_key_ci_environment_2026
+      ENV: testing
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run Database Migrations
+        working-directory: ./backend
+        run: |
+          alembic upgrade head
+
+      - name: Seed Demo Accounts
+        working-directory: ./backend
+        run: |
+          python -c "from app.database.init_db import create_tables; from app.database.session import SessionLocal; from app.auth.router import seed_demo_users; create_tables(); db = SessionLocal(); seed_demo_users(db); db.close()"
+
+      - name: Run Pytest Test Suite
+        working-directory: ./backend
+        run: |
+          pytest -v --durations=10
+
+  frontend-build:
+    name: Frontend Typecheck & Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Run TypeScript Typecheck & Vite Build
+        working-directory: ./frontend
+        run: npm run build
