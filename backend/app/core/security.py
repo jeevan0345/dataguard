@@ -15,9 +15,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ENV = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower()
 SECRET_KEY = os.getenv("SECRET_KEY", "dataguard_secret_key_2026")
+DEFAULT_DEV_SECRET = "dataguard_secret_key_2026"
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24h default for demo convenience
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+
+if ENV in ["production", "prod"]:
+    if not os.getenv("SECRET_KEY") or SECRET_KEY == DEFAULT_DEV_SECRET:
+        raise RuntimeError(
+            "CRITICAL SECURITY CONFIGURATION ERROR: DataGuard refused to start in production environment "
+            "because SECRET_KEY is missing or set to the default insecure development key. "
+            "Set a strong, random 256-bit SECRET_KEY in your environment variables."
+        )
 
 
 def hash_password(password: str) -> str:

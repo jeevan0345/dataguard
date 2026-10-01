@@ -338,7 +338,8 @@ def create_dataset(
     response_model=list[DatasetRegistryResponse]
 )
 def get_all_datasets(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
 
     return DatasetRegistryService.get_all_datasets(db)
@@ -350,7 +351,8 @@ def get_all_datasets(
 )
 def get_dataset(
     dataset_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
 
     dataset = DatasetRegistryService.get_dataset(

@@ -2,6 +2,9 @@
 DataGuard Authentication & RBAC Routes
 """
 
+import os
+from collections import defaultdict
+from time import time
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -21,6 +24,27 @@ router = APIRouter(
     tags=["Authentication & RBAC"],
 )
 
+_failed_login_attempts: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_login_rate_limit(key: str, max_attempts: int = 10, window_seconds: int = 60) -> None:
+    now = time()
+    attempts = [t for t in _failed_login_attempts[key] if now - t < window_seconds]
+    _failed_login_attempts[key] = attempts
+    if len(attempts) >= max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please wait 60 seconds before trying again.",
+        )
+
+
+def _record_failed_attempt(key: str) -> None:
+    _failed_login_attempts[key].append(time())
+
+
+def _reset_attempts(key: str) -> None:
+    _failed_login_attempts.pop(key, None)
+
 
 @router.post(
     "/register",
@@ -32,10 +56,19 @@ def register(
     db: Session = Depends(get_db),
 ):
     """
-    Register a new DataGuard user with a specified RBAC role.
+    Register a new DataGuard user.
+    Prevents public self-elevation to ADMIN; assigns DATA_ENGINEER or VIEWER.
     """
     try:
-        user = AuthService.register_user(db, payload)
+        # Prevent self-elevation to ADMIN on public registration
+        safe_role = "DATA_ENGINEER" if payload.role == "ADMIN" else (payload.role or "DATA_ENGINEER")
+        safe_payload = UserRegister(
+            email=payload.email,
+            full_name=payload.full_name,
+            password=payload.password,
+            role=safe_role,
+        )
+        user = AuthService.register_user(db, safe_payload)
         token = AuthService.create_token_for_user(user)
         return {
             "access_token": token,
@@ -59,19 +92,25 @@ def login(
 ):
     """
     Authenticate with email and password to receive a JWT access token.
+    Enforces brute-force rate limiting (max 10 failed attempts/minute).
     """
+    rate_key = payload.email.lower()
+    _check_login_rate_limit(rate_key)
+
     user = AuthService.authenticate_user(
         db=db,
         email=payload.email,
         password=payload.password,
     )
     if not user:
+        _record_failed_attempt(rate_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    _reset_attempts(rate_key)
     token = AuthService.create_token_for_user(user)
     return {
         "access_token": token,
@@ -101,11 +140,17 @@ def seed_demo_users(
     db: Session = Depends(get_db),
 ):
     """
-    Utility endpoint to ensure default demo users exist:
-    - admin@dataguard.ai (pass: admin123, Role: ADMIN)
-    - engineer@dataguard.ai (pass: engineer123, Role: DATA_ENGINEER)
-    - viewer@dataguard.ai (pass: viewer123, Role: VIEWER)
+    Utility endpoint to ensure default demo users exist in development.
+    Strictly forbidden in production environments.
     """
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower()
+    allow_seed = os.getenv("ALLOW_SEED_DEMO_USERS", "true").lower() == "true"
+    if env in ["production", "prod"] or not allow_seed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Demo user seeding is disabled in production environments.",
+        )
+
     demo_accounts = [
         ("admin@dataguard.ai", "System Administrator", "admin123", "ADMIN"),
         ("engineer@dataguard.ai", "Lead Data Engineer", "engineer123", "DATA_ENGINEER"),

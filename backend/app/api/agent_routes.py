@@ -168,10 +168,6 @@ class RecoveryExecuteRequest(BaseModel):
     audit_id: Optional[str] = None
 
 
-# Cache last active audit result for copilot contextual fallback
-_active_audit_context: dict[str, Any] = {}
-
-
 @router.post("/orchestrate")
 def orchestrate_audit(
     payload: OrchestrateRequest,
@@ -183,7 +179,6 @@ def orchestrate_audit(
     Inspector -> Drift -> Evidence -> Root Cause -> Recommendation -> Recovery -> Reporter.
     Persists findings to PostgreSQL.
     """
-    global _active_audit_context
     try:
         rows = DatasetLoader.load_dataset(payload.dataset_path)
         if not rows:
@@ -232,8 +227,6 @@ def orchestrate_audit(
         result["audit_hmac"] = inspection_run.audit_hmac
         result["created_at"] = inspection_run.created_at.isoformat() if inspection_run.created_at else None
         result["friendly_name"] = _friendly_dataset_name(payload.dataset_path)
-
-        _active_audit_context = result
         return result
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -291,7 +284,6 @@ def run_simulation(
     Executes a simulated ETL pipeline run with selectable fault injection.
     Persists generated inspection run into PostgreSQL.
     """
-    global _active_audit_context
     try:
         sim_result = ETLSimulator.run_simulation(
             dataset_path=payload.dataset_path,
@@ -317,7 +309,6 @@ def run_simulation(
             audit_res["friendly_name"] = _friendly_dataset_name(payload.dataset_path)
             sim_result["audit"] = audit_res
 
-        _active_audit_context = sim_result.get("audit", {})
         return sim_result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -327,6 +318,7 @@ def run_simulation(
 def copilot_chat(
     payload: CopilotChatRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Interactive AI assistant for Data Engineers.
@@ -334,9 +326,9 @@ def copilot_chat(
     Loads latest persisted audit from PostgreSQL if context is not supplied.
     """
     agent = CopilotAgent()
-    context = payload.context or _active_audit_context
+    context = payload.context
 
-    # Fallback to latest persisted audit in database if active context is empty
+    # Fallback to latest persisted audit in database if context is empty
     if not context or not context.get("inspection"):
         latest_run = (
             db.query(InspectionRun)
@@ -700,7 +692,10 @@ def get_system_health(db: Session = Depends(get_db)):
 
 
 @router.get("/audits/latest")
-def get_latest_audit(db: Session = Depends(get_db)):
+def get_latest_audit(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Retrieves the most recent persisted audit dossier from PostgreSQL.
     """
@@ -716,7 +711,11 @@ def get_latest_audit(db: Session = Depends(get_db)):
 
 
 @router.get("/audits/{inspection_id}")
-def get_audit_by_id(inspection_id: UUID, db: Session = Depends(get_db)):
+def get_audit_by_id(
+    inspection_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Retrieves a specific persisted audit dossier by its UUID from PostgreSQL.
     """
@@ -735,6 +734,7 @@ def get_audit_by_id(inspection_id: UUID, db: Session = Depends(get_db)):
 def list_audits(
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Lists recent historical audits for UI selection dropdowns.
@@ -761,7 +761,10 @@ def list_audits(
 
 
 @router.get("/reports")
-def list_reports(db: Session = Depends(get_db)):
+def list_reports(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Lists real generated PDF and Excel audit report files from storage.
     """
@@ -785,26 +788,39 @@ def list_reports(db: Session = Depends(get_db)):
 
 
 @router.get("/reports/download/{filename}")
-def download_report(filename: str):
+def download_report(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
     """
     Downloads an executive PDF or Excel audit report.
+    Enforces directory path sandboxing to reject traversal attacks.
     """
-    # Prevent path traversal
     safe_name = Path(filename).name
-    filepath = os.path.join("reports", safe_name)
-    if not os.path.exists(filepath):
+    reports_dir = Path("reports").resolve()
+    filepath = (reports_dir / safe_name).resolve()
+
+    try:
+        filepath.relative_to(reports_dir)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied: path traversal detected.")
+
+    if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Requested report file does not exist.")
 
-    media_type = "application/pdf" if filename.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    media_type = "application/pdf" if safe_name.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     return FileResponse(
-        path=filepath,
+        path=str(filepath),
         filename=safe_name,
         media_type=media_type,
     )
 
 
 @router.get("/alerts")
-def get_operational_alerts(unread_only: bool = False):
+def get_operational_alerts(
+    unread_only: bool = False,
+    current_user: User = Depends(get_current_user),
+):
     """
     Fetches operational notification alerts for the frontend dashboard.
     """
@@ -815,7 +831,9 @@ def get_operational_alerts(unread_only: bool = False):
 
 
 @router.post("/alerts/mark-read")
-def mark_alerts_read():
+def mark_alerts_read(
+    current_user: User = Depends(get_current_user),
+):
     """
     Marks all notifications as read.
     """
@@ -824,7 +842,10 @@ def mark_alerts_read():
 
 
 @router.get("/dashboard/summary")
-def get_dashboard_summary(db: Session = Depends(get_db)):
+def get_dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Aggregates overall health KPIs, severity distributions, and recent runs for dashboard graphs.
     Health Index uses a deterministic documented formula based on real findings.
