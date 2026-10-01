@@ -120,6 +120,14 @@ export const api = {
       const res = await apiClient.post('/agents/alerts/mark-read');
       return res.data;
     },
+    setAuditAsBaseline: async (inspectionId: string) => {
+      const res = await apiClient.post(`/agents/audits/${inspectionId}/set-baseline`);
+      return res.data;
+    },
+    verifyAuditHash: async (inspectionId: string) => {
+      const res = await apiClient.get(`/agents/audits/${inspectionId}/verify`);
+      return res.data;
+    },
     getReportDownloadUrl: (filename: string) => {
       return `${API_BASE_URL}/agents/reports/download/${filename}`;
     },

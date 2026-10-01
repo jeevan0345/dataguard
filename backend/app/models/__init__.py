@@ -12,6 +12,7 @@ from .dataset_registry import DatasetRegistry
 from .inspection_run import InspectionRun
 from .inspection_finding import InspectionFinding
 from .user import User
+from .dataset_baseline import DatasetBaseline
 
 
 # ETL models will be added later

@@ -13,6 +13,8 @@ import {
   Calendar,
   Sparkles,
   GitBranch,
+  BookmarkCheck,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface FindingsViewProps {
@@ -27,6 +29,8 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
   const [audits, setAudits] = useState<AuditSummaryItem[]>([]);
   const [loadingAudits, setLoadingAudits] = useState<boolean>(false);
   const [localDossier, setLocalDossier] = useState<AuditDossier | null>(dossier);
+  const [settingBaseline, setSettingBaseline] = useState<boolean>(false);
+  const [baselineMessage, setBaselineMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalDossier(dossier);
@@ -73,6 +77,22 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
   const findings: Finding[] = currentDossier?.inspection?.findings || [];
   const evidenceItems = currentDossier?.evidence?.evidence || [];
   const rcaCandidates = currentDossier?.root_cause?.candidates || [];
+
+  const handleSetBaseline = async () => {
+    if (!currentDossier?.id) return;
+    setSettingBaseline(true);
+    setBaselineMessage(null);
+    try {
+      await api.agents.setAuditAsBaseline(currentDossier.id);
+      setBaselineMessage('Baseline updated successfully! Future audits will compare against this baseline.');
+      setTimeout(() => setBaselineMessage(null), 5000);
+    } catch (err: any) {
+      setBaselineMessage(`Failed to set baseline: ${err.response?.data?.detail || err.message}`);
+      setTimeout(() => setBaselineMessage(null), 5000);
+    } finally {
+      setSettingBaseline(false);
+    }
+  };
 
   const filteredFindings = selectedSeverity === 'ALL'
     ? findings
@@ -186,8 +206,26 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
               <div>Rows: <span className="text-slate-300">{currentDossier.row_count.toLocaleString()}</span></div>
               <div>Columns: <span className="text-slate-300">{currentDossier.column_count}</span></div>
               <div>Status: <span className="text-emerald-400 font-bold">{currentDossier.audit_status}</span></div>
+              {currentDossier.id && (
+                <button
+                  onClick={handleSetBaseline}
+                  disabled={settingBaseline}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-50 transition text-xs font-semibold cursor-pointer"
+                  title="Designate this audit as the authoritative baseline for schema and drift comparison"
+                >
+                  <BookmarkCheck className="w-3.5 h-3.5" />
+                  <span>{settingBaseline ? 'Saving...' : 'Set as Baseline'}</span>
+                </button>
+              )}
             </div>
           </div>
+
+          {baselineMessage && (
+            <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{baselineMessage}</span>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Findings List (2 cols) */}

@@ -19,6 +19,7 @@ from app.schemas.dataset_registry import (
 from app.services.dataset_registry_service import DatasetRegistryService
 from app.etl.extractor.dataset_loader import DatasetLoader
 from app.etl.extractor.schema_inference import SchemaInference
+from app.ml.profiler import DatasetProfiler
 
 router = APIRouter(
     prefix="/datasets",
@@ -266,6 +267,29 @@ def upload_dataset(
             detail=f"Could not parse uploaded {ext} file: {str(exc)}",
         )
 
+    # Compute quality score based on profiler completeness and uniqueness
+    profiler = DatasetProfiler()
+    profile_res = profiler.profile(rows)
+    total_cells = row_count * col_count if row_count and col_count else 1
+    missing_cells = sum(
+        c.get("missing_count", 0)
+        for c in profile_res.get("columns", {}).values()
+        if isinstance(c, dict)
+    )
+
+    seen_rows = set()
+    dup_rows = 0
+    for r in rows:
+        t = tuple(sorted((k, str(v)) for k, v in r.items()))
+        if t in seen_rows:
+            dup_rows += 1
+        else:
+            seen_rows.add(t)
+
+    completeness = max(0.0, 1.0 - (missing_cells / total_cells))
+    uniqueness = max(0.0, 1.0 - (dup_rows / row_count)) if row_count > 0 else 1.0
+    computed_quality_score = round(((completeness * 0.6) + (uniqueness * 0.4)) * 100, 2)
+
     dataset_entry = DatasetRegistry(
         dataset_name=f"{safe_base}_{uuid4().hex[:4]}",
         dataset_type="USER_UPLOAD",
@@ -274,7 +298,7 @@ def upload_dataset(
         file_format=ext.replace(".", ""),
         row_count=row_count,
         column_count=col_count,
-        quality_score=100.0,
+        quality_score=computed_quality_score,
         status="Registered",
     )
     db.add(dataset_entry)

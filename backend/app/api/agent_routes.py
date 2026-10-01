@@ -29,6 +29,7 @@ from app.notifications.service import NotificationService
 from app.models.inspection_run import InspectionRun
 from app.models.inspection_finding import InspectionFinding
 from app.services.inspection_finding_service import InspectionFindingService
+from app.services.baseline_service import BaselineService
 from app.evidence.evidence_builder import EvidenceBuilder
 from app.agents.root_cause.root_cause_agent import RootCauseAgent
 from app.agents.recommendation.recommendation_agent import RecommendationAgent
@@ -181,13 +182,28 @@ def orchestrate_audit(
 
         rows_subset = rows[:payload.limit] if payload.limit else rows
         actual_schema = SchemaInference.infer_schema(rows_subset)
-        expected_schema = payload.expected_schema or actual_schema
+
+        # Baseline lifecycle: Check existing baseline for dataset; if first audit, create baseline
+        baseline = BaselineService.get_baseline(db, payload.dataset_path)
+        reference_rows = None
+        if baseline:
+            expected_schema = payload.expected_schema or baseline.expected_schema
+            reference_rows = baseline.reference_sample
+        else:
+            expected_schema = payload.expected_schema or actual_schema
+            BaselineService.set_baseline(
+                db=db,
+                dataset_path=payload.dataset_path,
+                rows=rows_subset,
+                schema=actual_schema,
+            )
 
         orchestrator = MultiAgentOrchestrator()
         result = orchestrator.audit_dataset(
             rows=rows_subset,
             expected_schema=expected_schema,
             actual_schema=actual_schema,
+            reference_rows=reference_rows,
             dataset_path=payload.dataset_path,
             generate_reports=True,
         )
@@ -212,6 +228,46 @@ def orchestrate_audit(
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/audits/{inspection_id}/set-baseline")
+def set_audit_as_baseline(
+    inspection_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("ADMIN", "DATA_ENGINEER")),
+):
+    """
+    Sets the specified inspection run as the active historical baseline for its dataset path.
+    Updates expected schema and reference sample in PostgreSQL.
+    """
+    run = db.query(InspectionRun).filter(InspectionRun.id == inspection_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Inspection run not found.")
+
+    try:
+        rows = DatasetLoader.load_dataset(run.dataset_path)
+    except Exception:
+        rows = []
+
+    actual_schema = SchemaInference.infer_schema(rows[:500]) if rows else {}
+    baseline = BaselineService.set_baseline(
+        db=db,
+        dataset_path=run.dataset_path,
+        rows=rows[:500],
+        schema=actual_schema,
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": f"Successfully set inspection {inspection_id} as baseline for '{run.dataset_path}'.",
+        "baseline": {
+            "id": str(baseline.id),
+            "dataset_path": baseline.dataset_path,
+            "expected_schema": baseline.expected_schema,
+            "sample_row_count": baseline.sample_row_count,
+            "updated_at": baseline.updated_at.isoformat() if baseline.updated_at else None,
+        },
+    }
 
 
 @router.post("/simulate")
