@@ -5,7 +5,10 @@ Generates safe, policy-checked recovery candidates for autonomous or operator-ap
 
 from typing import Any
 import copy
+from collections import Counter
+import numpy as np
 from app.agents.base.base_agent import BaseAgent
+from app.ml.isolation_forest import IsolationForestDetector
 
 
 class RecoveryAgent(BaseAgent):
@@ -44,14 +47,15 @@ class RecoveryAgent(BaseAgent):
             ftype = finding.get("type", "")
             severity = finding.get("severity", "MEDIUM")
             evidence = finding.get("evidence", {})
-            col = evidence.get("column", "")
+            col = finding.get("column") or evidence.get("column", "")
 
             if ftype == "DUPLICATE_RECORDS":
                 dup_count = evidence.get("duplicate_count", 0)
                 dup_pct = evidence.get("duplicate_percentage", 0.0)
-                # Policy check: cannot drop > 25% without explicit operator approval
                 requires_approval = dup_pct > self.max_auto_quarantine_pct
                 policy_status = "REQUIRES_OPERATOR_APPROVAL" if requires_approval else "POLICY_APPROVED"
+                risk_level = "MEDIUM" if requires_approval else "LOW"
+                required_role = "ADMIN" if requires_approval else "DATA_ENGINEER"
 
                 candidates.append({
                     "action_id": f"ACT-{action_id:03d}",
@@ -59,15 +63,16 @@ class RecoveryAgent(BaseAgent):
                     "target_type": "DATASET",
                     "severity": severity,
                     "target": "ALL_ROWS",
-                    "risk_level": "MEDIUM" if requires_approval else "LOW",
+                    "risk_level": risk_level,
                     "policy_status": policy_status,
+                    "required_role": required_role,
                     "estimated_impact": f"Removes {dup_count} duplicate record(s) ({dup_pct:.1f}%).",
-                    "action_parameters": {"mode": "KEEP_FIRST_OCCURRENCE"},
+                    "action_parameters": {"mode": "KEEP_FIRST_OCCURRENCE", "count": dup_count},
                     "remediation_code": (
                         "seen = set()\n"
                         "deduped_rows = []\n"
                         "for r in rows:\n"
-                        "    h = tuple(sorted(r.items()))\n"
+                        "    h = tuple(sorted((k, str(v) if v is not None else '') for k, v in r.items()))\n"
                         "    if h not in seen:\n"
                         "        seen.add(h)\n"
                         "        deduped_rows.append(r)"
@@ -79,21 +84,60 @@ class RecoveryAgent(BaseAgent):
                 missing_count = evidence.get("missing_count", 0)
                 missing_pct = evidence.get("missing_percentage", 0.0)
                 requires_approval = missing_pct > self.max_auto_quarantine_pct
+                risk_level = "HIGH" if requires_approval else "LOW"
+                policy_status = "REQUIRES_OPERATOR_APPROVAL" if requires_approval else "POLICY_APPROVED"
+                required_role = "ADMIN" if requires_approval else "DATA_ENGINEER"
 
-                # If identifier column, propose quarantine; if value, propose default imputation
+                # If identifier column, propose quarantine; if value, propose domain-aware default imputation
                 is_identifier = "id" in col.lower() or "key" in col.lower()
                 if is_identifier:
                     action_type = "QUARANTINE_NULL_RECORDS"
                     action_desc = f"Quarantine {missing_count} rows with null identifier in '{col}' to DLQ."
                     rem_code = f"clean_rows = [r for r in rows if r.get('{col}') is not None and str(r.get('{col}')).strip() != '']"
+                    act_params: dict[str, Any] = {"column": col, "missing_count": missing_count}
                 else:
                     action_type = "IMPUTE_DEFAULT_VALUE"
-                    action_desc = f"Impute missing values in '{col}' with 'UNKNOWN' or median."
+                    # Determine strategy and impute value dynamically from data
+                    is_numeric = False
+                    strategy = "MODE"
+                    impute_val: Any = "UNKNOWN"
+
+                    if rows:
+                        valid_nums: list[float] = []
+                        valid_strs: list[str] = []
+                        for r in rows:
+                            v = r.get(col)
+                            if v is not None and str(v).strip() != "" and str(v).strip().upper() != "UNKNOWN":
+                                try:
+                                    fv = float(v)
+                                    valid_nums.append(fv)
+                                except (ValueError, TypeError):
+                                    valid_strs.append(str(v).strip())
+
+                        if valid_nums and len(valid_nums) >= len(valid_strs):
+                            is_numeric = True
+                            med = float(np.median(valid_nums))
+                            if all(float(x).is_integer() for x in valid_nums):
+                                impute_val = int(round(med))
+                            else:
+                                impute_val = round(med, 2)
+                            strategy = "MEDIAN"
+                        elif valid_strs:
+                            impute_val = Counter(valid_strs).most_common(1)[0][0]
+                            strategy = "MODE"
+
+                    action_desc = f"Imputes {missing_count} missing value(s) in '{col}' using {strategy.lower()} ({repr(impute_val)})."
                     rem_code = (
                         f"for r in rows:\n"
                         f"    if r.get('{col}') is None or str(r.get('{col}')).strip() == '':\n"
-                        f"        r['{col}'] = 'UNKNOWN'"
+                        f"        r['{col}'] = {repr(impute_val)}"
                     )
+                    act_params = {
+                        "column": col,
+                        "missing_count": missing_count,
+                        "strategy": strategy,
+                        "impute_value": impute_val,
+                    }
 
                 candidates.append({
                     "action_id": f"ACT-{action_id:03d}",
@@ -101,10 +145,11 @@ class RecoveryAgent(BaseAgent):
                     "target_type": "COLUMN",
                     "target": col,
                     "severity": severity,
-                    "risk_level": "HIGH" if requires_approval else "LOW",
-                    "policy_status": "REQUIRES_OPERATOR_APPROVAL" if requires_approval else "POLICY_APPROVED",
+                    "risk_level": risk_level,
+                    "policy_status": policy_status,
+                    "required_role": required_role,
                     "estimated_impact": action_desc,
-                    "action_parameters": {"column": col, "missing_count": missing_count},
+                    "action_parameters": act_params,
                     "remediation_code": rem_code,
                 })
                 action_id += 1
@@ -119,6 +164,7 @@ class RecoveryAgent(BaseAgent):
                     "severity": severity,
                     "risk_level": "LOW",
                     "policy_status": "POLICY_APPROVED",
+                    "required_role": "DATA_ENGINEER",
                     "estimated_impact": f"Backfills missing column '{col}' with default NULL values.",
                     "action_parameters": {"column": col, "default_type": exp_type},
                     "remediation_code": f"for r in rows: r.setdefault('{col}', None)",
@@ -135,6 +181,7 @@ class RecoveryAgent(BaseAgent):
                     "severity": severity,
                     "risk_level": "LOW",
                     "policy_status": "POLICY_APPROVED",
+                    "required_role": "DATA_ENGINEER",
                     "estimated_impact": f"Registers unexpected column '{col}' ({act_type}) into target schema.",
                     "action_parameters": {"column": col, "type": act_type},
                     "remediation_code": f"expected_schema['{col}'] = '{act_type}'",
@@ -143,6 +190,7 @@ class RecoveryAgent(BaseAgent):
 
             elif ftype in ["ML_ISOLATION_FOREST_ANOMALY", "NUMERICAL_OUTLIERS"]:
                 outlier_count = evidence.get("outlier_count", evidence.get("anomalous_row_count", 0))
+                anom_indices = evidence.get("sample_anomalous_indices", []) or evidence.get("anomalous_row_indices", [])
                 candidates.append({
                     "action_id": f"ACT-{action_id:03d}",
                     "action_type": "QUARANTINE_ML_OUTLIERS",
@@ -151,9 +199,19 @@ class RecoveryAgent(BaseAgent):
                     "severity": severity,
                     "risk_level": "MEDIUM",
                     "policy_status": "REQUIRES_OPERATOR_APPROVAL",
-                    "estimated_impact": f"Routes {outlier_count} multivariate outlier records into dlq_anomalies.",
-                    "action_parameters": {"column": col, "count": outlier_count},
-                    "remediation_code": "-- Divert anomalous rows into dead-letter storage",
+                    "required_role": "ADMIN",
+                    "estimated_impact": f"Quarantines {outlier_count} multivariate outlier records into dlq_anomalies.",
+                    "action_parameters": {
+                        "column": col or "MULTIVARIATE",
+                        "count": outlier_count,
+                        "anomalous_indices": anom_indices,
+                    },
+                    "remediation_code": (
+                        "# Quarantine multivariate outliers detected by Isolation Forest\n"
+                        "detector = IsolationForestDetector()\n"
+                        "outlier_indices = set(detector.detect(rows).get('anomalous_row_indices', []))\n"
+                        "clean_rows = [r for idx, r in enumerate(rows) if idx not in outlier_indices]"
+                    ),
                 })
                 action_id += 1
 
@@ -190,8 +248,7 @@ class RecoveryAgent(BaseAgent):
                 seen = set()
                 deduped = []
                 for r in remediated:
-                    # Convert row to frozen representation
-                    frozen = tuple(sorted((k, str(v)) for k, v in r.items()))
+                    frozen = tuple(sorted((k, str(v).strip() if v is not None else "") for k, v in r.items()))
                     if frozen not in seen:
                         seen.add(frozen)
                         deduped.append(r)
@@ -206,9 +263,42 @@ class RecoveryAgent(BaseAgent):
 
             elif atype == "IMPUTE_DEFAULT_VALUE":
                 col = act.get("action_parameters", {}).get("column", target)
+                impute_val = act.get("action_parameters", {}).get("impute_value")
+
+                # If impute_val is None or "UNKNOWN", compute dynamically based on current data
+                if impute_val is None or impute_val == "UNKNOWN":
+                    valid_nums: list[float] = []
+                    valid_strs: list[str] = []
+                    for r in remediated:
+                        v = r.get(col)
+                        if v is not None and str(v).strip() != "" and str(v).strip().upper() != "UNKNOWN":
+                            try:
+                                fv = float(v)
+                                valid_nums.append(fv)
+                            except (ValueError, TypeError):
+                                valid_strs.append(str(v).strip())
+
+                    if valid_nums and len(valid_nums) >= len(valid_strs):
+                        med = float(np.median(valid_nums))
+                        if all(float(x).is_integer() for x in valid_nums):
+                            impute_val = int(round(med))
+                        else:
+                            impute_val = round(med, 2)
+                    elif valid_strs:
+                        impute_val = Counter(valid_strs).most_common(1)[0][0]
+                    else:
+                        impute_val = "UNKNOWN"
+
                 for r in remediated:
-                    if r.get(col) is None or str(r.get(col)).strip() == "":
-                        r[col] = "UNKNOWN"
+                    if r.get(col) is None or str(r.get(col)).strip() == "" or str(r.get(col)).strip().upper() == "UNKNOWN":
+                        r[col] = impute_val
+
+            elif atype == "QUARANTINE_ML_OUTLIERS":
+                detector = IsolationForestDetector()
+                iso_res = detector.detect(remediated)
+                outlier_indices = set(iso_res.get("anomalous_row_indices", []))
+                if outlier_indices:
+                    remediated = [r for idx, r in enumerate(remediated) if idx not in outlier_indices]
 
             elif atype == "RESTORE_SCHEMA_COLUMN":
                 col = act.get("action_parameters", {}).get("column", target)

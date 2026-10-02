@@ -106,6 +106,10 @@ class InspectorAgent(BaseAgent):
             ml_result.get("findings", [])
         )
 
+        for f in findings:
+            if not f.get("column") and f.get("evidence", {}).get("column"):
+                f["column"] = f["evidence"]["column"]
+
         # ---------------------------------------------------------
         # Determine overall status
         # ---------------------------------------------------------

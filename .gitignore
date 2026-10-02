@@ -22,7 +22,8 @@ yarn-error.log*
 celerybeat-schedule
 **/reports/*.pdf
 **/reports/*.xlsx
-**/data/remediated/*.csv
+**/data/remediated/*
+!**/data/remediated/.gitkeep
 
 # OS & Editors
 .DS_Store

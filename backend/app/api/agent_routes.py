@@ -412,6 +412,7 @@ def execute_and_verify_recovery(
 
         # 3. Server-side validation of requested actions against authoritative proposals
         validated_actions: list[dict[str, Any]] = []
+        skipped_actions: list[dict[str, Any]] = []
         for act in payload.actions:
             act_id = act.get("action_id")
             atype = act.get("action_type")
@@ -452,44 +453,96 @@ def execute_and_verify_recovery(
                 is_high_risk = True
 
             if is_high_risk and current_user.role != "ADMIN":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"High-risk remediation action '{matched.get('action_id')}' ({matched.get('action_type')}) on '{matched.get('target')}' requires ADMIN approval.",
-                )
-
-            safe_act = copy.deepcopy(matched)
-            validated_actions.append(safe_act)
+                skipped_act = copy.deepcopy(matched)
+                skipped_act["reason"] = f"Requires ADMIN approval (Policy status: {matched.get('policy_status', 'REQUIRES_OPERATOR_APPROVAL')}). Insufficient permissions for role '{current_user.role}'."
+                skipped_act["execution_status"] = "SKIPPED_POLICY_RESTRICTION"
+                skipped_actions.append(skipped_act)
+            else:
+                safe_act = copy.deepcopy(matched)
+                validated_actions.append(safe_act)
 
         # 4. Execute recovery across full dataset up to 50,000 rows
         MAX_AUDIT_ROWS = 50000
         target_rows = all_rows[:MAX_AUDIT_ROWS]
         original_count = len(target_rows)
 
-        remediated_rows = recovery_agent.execute_recovery(target_rows, validated_actions)
+        executed_audit_records: list[dict[str, Any]] = []
+        current_dataset = copy.deepcopy(target_rows)
+
+        for act in validated_actions:
+            count_before = len(current_dataset)
+            act_type = act.get("action_type")
+            target = act.get("target")
+
+            # Apply this remediation action
+            next_dataset = recovery_agent.execute_recovery(current_dataset, [act])
+            count_after = len(next_dataset)
+
+            if act_type in ["DEDUPLICATE_ROWS", "QUARANTINE_ML_OUTLIERS", "QUARANTINE_NULL_RECORDS"]:
+                rows_affected = abs(count_before - count_after)
+            elif act_type == "IMPUTE_DEFAULT_VALUE":
+                col = act.get("action_parameters", {}).get("column", target)
+                rows_affected = sum(
+                    1 for idx in range(len(current_dataset))
+                    if (current_dataset[idx].get(col) is None or str(current_dataset[idx].get(col)).strip() == "")
+                    and (next_dataset[idx].get(col) is not None and str(next_dataset[idx].get(col)).strip() != "")
+                )
+            else:
+                rows_affected = 0
+
+            current_dataset = next_dataset
+
+            executed_audit_records.append({
+                "action_id": act.get("action_id"),
+                "action_type": act_type,
+                "target": target,
+                "target_type": act.get("target_type", "DATASET"),
+                "rows_affected": rows_affected,
+                "before_count": count_before,
+                "after_count": count_after,
+                "actor": current_user.email,
+                "role": current_user.role,
+                "approval": "ADMIN_APPROVED" if current_user.role == "ADMIN" else "AUTO_POLICY_APPROVED",
+                "execution_status": "SUCCESS",
+                "verification_status": "PENDING_VERIFICATION",
+                "severity": act.get("severity", "MEDIUM"),
+                "risk_level": act.get("risk_level", "LOW"),
+                "policy_status": act.get("policy_status", "POLICY_APPROVED"),
+                "estimated_impact": act.get("estimated_impact", ""),
+            })
+
+        remediated_rows = current_dataset
         remediated_count = len(remediated_rows)
 
-        # 5. Persist remediated dataset to disk
+        # 5. Persist remediated dataset to disk (CSV and XLSX)
         remediated_dir = Path("data/remediated")
         remediated_dir.mkdir(parents=True, exist_ok=True)
         rec_uuid = uuid.uuid4()
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        file_name = f"remediated_{rec_uuid}_{ts}.csv"
-        file_path = remediated_dir / file_name
+
+        csv_file_name = f"remediated_{rec_uuid}_{ts}.csv"
+        csv_file_path = remediated_dir / csv_file_name
+
+        xlsx_file_name = f"remediated_{rec_uuid}_{ts}.xlsx"
+        xlsx_file_path = remediated_dir / xlsx_file_name
+
+        pdf_file_name = f"remediated_{rec_uuid}_{ts}.pdf"
+        pdf_file_path = remediated_dir / pdf_file_name
 
         if remediated_rows:
             fieldnames = list(remediated_rows[0].keys())
-            with open(file_path, "w", newline="", encoding="utf-8") as f:
+            with open(csv_file_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(remediated_rows)
         else:
-            with open(file_path, "w", newline="", encoding="utf-8") as f:
+            with open(csv_file_path, "w", newline="", encoding="utf-8") as f:
                 pass
 
-        file_hash = compute_file_sha256(str(file_path))
+        file_hash = compute_file_sha256(str(csv_file_path))
 
-        # 6. Post-recovery inspection & verification
-        post_sample = remediated_rows[:1000] if remediated_rows else []
+        # 6. Post-recovery inspection & verification on the exact authoritative remediated dataset
+        post_sample = remediated_rows[:2000] if len(remediated_rows) > 2000 else remediated_rows
         post_schema = SchemaInference.infer_schema(post_sample) if post_sample else {}
         post_audit = orchestrator.inspector_agent.execute(
             rows=post_sample,
@@ -503,6 +556,40 @@ def execute_and_verify_recovery(
             after_inspection=post_audit,
             original_row_count=original_count,
             remediated_row_count=remediated_count,
+        )
+
+        # Update verification status on all executed action audit records
+        for rec in executed_audit_records:
+            rec["verification_status"] = verdict_res["verdict"]
+
+        # Generate remediated Excel workbook and PDF report using ReporterAgent
+        audit_metadata = {
+            "dataset_path": payload.dataset_path,
+            "status": "RECOVERY_APPLIED",
+            "verdict": verdict_res["verdict"],
+            "original_row_count": original_count,
+            "remediated_file_hash": file_hash,
+            "executed_by": current_user.email,
+            "executed_by_role": current_user.role,
+            "actions_executed": executed_audit_records,
+            "actions_skipped": skipped_actions,
+        }
+
+        orchestrator.reporter_agent.generate_remediated_excel_report(
+            rows=remediated_rows,
+            recovery_run_id=str(rec_uuid),
+            audit_metadata=audit_metadata,
+            filename=xlsx_file_name,
+            output_dir=str(remediated_dir),
+        )
+
+        orchestrator.reporter_agent.generate_recovery_pdf_report(
+            recovery_data={
+                **audit_metadata,
+                "remediated_row_count": remediated_count,
+            },
+            filename=pdf_file_name,
+            output_dir=str(remediated_dir),
         )
 
         # 7. Persist post-recovery inspection record into PostgreSQL
@@ -523,8 +610,8 @@ def execute_and_verify_recovery(
             verdict=verdict_res["verdict"],
             original_row_count=original_count,
             remediated_row_count=remediated_count,
-            actions_executed=json.dumps(validated_actions),
-            remediated_file_path=str(file_path),
+            actions_executed=json.dumps(executed_audit_records),
+            remediated_file_path=str(csv_file_path),
             remediated_file_hash=file_hash,
             executed_by=current_user.id,
         )
@@ -541,9 +628,16 @@ def execute_and_verify_recovery(
             "remediated_row_count": remediated_count,
             "original_row_count": original_count,
             "remediated_inspection_id": str(post_run.id),
-            "remediated_file_path": str(file_path),
+            "remediated_file_path": str(csv_file_path),
+            "remediated_xlsx_path": str(xlsx_file_path),
+            "remediated_pdf_path": str(pdf_file_path),
             "remediated_file_hash": file_hash,
+            "actions_executed": executed_audit_records,
+            "actions_skipped": skipped_actions,
             "download_url": f"/agents/recovery/download/{recovery_run.id}",
+            "download_xlsx_url": f"/agents/recovery/download/{recovery_run.id}?format=xlsx",
+            "download_csv_url": f"/agents/recovery/download/{recovery_run.id}?format=csv",
+            "download_pdf_url": f"/agents/recovery/download/{recovery_run.id}?format=pdf",
         }
     except HTTPException:
         raise
@@ -554,35 +648,51 @@ def execute_and_verify_recovery(
 @router.get("/recovery/download/{recovery_run_id}")
 def download_remediated_dataset(
     recovery_run_id: UUID,
+    format: str = Query(default="csv"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Secure download endpoint for remediated dataset CSV files.
+    Secure download endpoint for remediated dataset files (CSV, XLSX, PDF).
     Enforces directory path sandboxing to reject traversal attacks.
     """
     run = db.query(RecoveryRun).filter(RecoveryRun.id == recovery_run_id).first()
     if not run or not run.remediated_file_path:
         raise HTTPException(status_code=404, detail="Remediation artifact not found.")
 
-    file_path = Path(run.remediated_file_path).resolve()
+    base_path = Path(run.remediated_file_path).resolve()
     remediated_dir = Path("data/remediated").resolve()
 
     # Sandboxing: Ensure path resides within data/remediated
     try:
-        file_path.relative_to(remediated_dir)
+        base_path.relative_to(remediated_dir)
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied: path traversal detected.")
 
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Remediated CSV file is no longer available on disk.")
+    fmt = str(format).lower().strip()
+    if fmt == "xlsx":
+        target_path = base_path.with_suffix(".xlsx")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif fmt == "pdf":
+        target_path = base_path.with_suffix(".pdf")
+        media_type = "application/pdf"
+    else:
+        target_path = base_path.with_suffix(".csv")
+        media_type = "text/csv"
+
+    if not target_path.exists():
+        if base_path.exists():
+            target_path = base_path
+            media_type = "text/csv"
+        else:
+            raise HTTPException(status_code=404, detail=f"Remediated {fmt.upper()} file is no longer available on disk.")
 
     return FileResponse(
-        path=str(file_path),
-        media_type="text/csv",
-        filename=file_path.name,
+        path=str(target_path),
+        media_type=media_type,
+        filename=target_path.name,
         headers={
-            "Content-Disposition": f'attachment; filename="{file_path.name}"',
+            "Content-Disposition": f'attachment; filename="{target_path.name}"',
             "X-File-SHA256": run.remediated_file_hash or "",
         },
     )

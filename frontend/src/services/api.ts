@@ -10,7 +10,8 @@ import {
   SyntheticScenario,
   GeneratedReport,
   AuditSummaryItem,
-  RegisteredDataset
+  RegisteredDataset,
+  RecoveryExecutionResult
 } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') || 'http://localhost:8000';
@@ -108,7 +109,7 @@ export const api = {
       const res = await apiClient.post('/agents/copilot/chat', { query, context });
       return res.data;
     },
-    executeRecovery: async (dataset_path: string, actions: any[], audit_id?: string) => {
+    executeRecovery: async (dataset_path: string, actions: any[], audit_id?: string): Promise<RecoveryExecutionResult> => {
       const res = await apiClient.post('/agents/recovery/execute', { dataset_path, actions, audit_id });
       return res.data;
     },
@@ -133,10 +134,10 @@ export const api = {
       const query = token ? `?token=${encodeURIComponent(token)}` : '';
       return `${API_BASE_URL}/agents/reports/download/${filename}${query}`;
     },
-    getRemediatedDownloadUrl: (recoveryRunId: string) => {
+    getRemediatedDownloadUrl: (recoveryRunId: string, format: string = 'xlsx') => {
       const token = localStorage.getItem('dataguard_token');
-      const query = token ? `?token=${encodeURIComponent(token)}` : '';
-      return `${API_BASE_URL}/agents/recovery/download/${recoveryRunId}${query}`;
+      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+      return `${API_BASE_URL}/agents/recovery/download/${recoveryRunId}?format=${format}${tokenParam}`;
     },
   },
 

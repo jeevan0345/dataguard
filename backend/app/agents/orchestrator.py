@@ -170,7 +170,10 @@ class MultiAgentOrchestrator:
         deduped_findings: list[dict[str, Any]] = []
         seen_keys: set[tuple[Any, Any]] = set()
         for f in inspector_res.get("findings", []):
-            key = (f.get("type"), f.get("column"))
+            col = f.get("column") or f.get("evidence", {}).get("column")
+            if not f.get("column") and col:
+                f["column"] = col
+            key = (f.get("type"), col)
             if key not in seen_keys:
                 seen_keys.add(key)
                 deduped_findings.append(f)

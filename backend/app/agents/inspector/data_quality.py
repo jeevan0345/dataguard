@@ -88,6 +88,7 @@ class DataQualityAgent:
             findings.append(
                 {
                     "type": "MISSING_VALUES",
+                    "column": column,
                     "severity": severity,
                     "message": (
                         f"Column '{column}' contains "

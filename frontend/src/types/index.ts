@@ -58,6 +58,38 @@ export interface RecoveryCandidate {
   estimated_impact: string;
   action_parameters: Record<string, any>;
   remediation_code: string;
+  required_role?: string;
+}
+
+export interface RecoveryExecutionResult {
+  recovery_run_id: string;
+  status: string;
+  executed_by: string;
+  user_role: string;
+  actions_executed: Array<{
+    action_id: string;
+    action_type: string;
+    target: string;
+    status: string;
+    [key: string]: any;
+  }>;
+  actions_skipped: Array<{
+    action_id: string;
+    action_type: string;
+    target: string;
+    status: string;
+    reason: string;
+    [key: string]: any;
+  }>;
+  dataset_path: string;
+  remediated_file_path: string;
+  remediated_file_hash: string;
+  download_url: string;
+  download_xlsx_url: string;
+  download_csv_url: string;
+  download_pdf_url: string;
+  verification: VerificationResult;
+  audit_trail_recorded: boolean;
 }
 
 export interface VerificationResult {
