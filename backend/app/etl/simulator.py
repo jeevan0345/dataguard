@@ -5,6 +5,8 @@ Simulates enterprise ETL pipeline runs with controllable anomaly injections for 
 
 import copy
 import random
+import csv
+from pathlib import Path
 from typing import Any
 from app.etl.extractor.dataset_loader import DatasetLoader
 from app.etl.extractor.schema_inference import SchemaInference
@@ -34,7 +36,8 @@ class ETLSimulator:
         - ML_OUTLIERS: Injects extreme numeric spikes.
         - DISASTER: Multi-fault composite corruption.
         """
-        all_rows = DatasetLoader.load_dataset(dataset_path)
+        fetch_limit = max(sample_size * 3, 1500)
+        all_rows = DatasetLoader.load_dataset(dataset_path, limit=fetch_limit)
         if not all_rows:
             raise ValueError(f"Failed to load dataset at {dataset_path}")
 
@@ -89,13 +92,24 @@ class ETLSimulator:
                 sample_rows[i][target_numeric] = 999999.99
             injected_faults.append(f"Injected extreme numerical outliers in column '{target_numeric}'")
 
+        # Persist simulated dataset to disk inside test/ so downstream recovery can operate on real faulted rows
+        sim_dataset_path = f"test/simulated_{Path(dataset_path).stem}.csv"
+        sim_full_path = DatasetLoader.DATASET_ROOT / sim_dataset_path
+        sim_full_path.parent.mkdir(parents=True, exist_ok=True)
+        if sample_rows:
+            fieldnames = list(sample_rows[0].keys())
+            with open(sim_full_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(sample_rows)
+
         # Run MultiAgentOrchestrator
         orchestrator = MultiAgentOrchestrator()
         audit_result = orchestrator.audit_dataset(
             rows=sample_rows,
             expected_schema=expected_schema,
             actual_schema=SchemaInference.infer_schema(sample_rows),
-            dataset_path=dataset_path,
+            dataset_path=sim_dataset_path,
             generate_reports=True,
         )
 
@@ -104,5 +118,6 @@ class ETLSimulator:
             "sample_size": sample_size,
             "injected_faults": injected_faults,
             "final_row_count": len(sample_rows),
+            "dataset_path": sim_dataset_path,
             "audit": audit_result,
         }

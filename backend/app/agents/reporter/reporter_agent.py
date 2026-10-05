@@ -334,7 +334,7 @@ class ReporterAgent(BaseAgent):
         ws_data.title = "Remediated Dataset"
 
         if rows:
-            MAX_XLSX_ROWS = 5000
+            MAX_XLSX_ROWS = 2500
             export_rows = rows[:MAX_XLSX_ROWS] if len(rows) > MAX_XLSX_ROWS else rows
             headers = list(export_rows[0].keys())
             ws_data.append(headers)
@@ -473,7 +473,7 @@ class ReporterAgent(BaseAgent):
         wb.save(filepath)
 
         # RIGOROUS OPENPYXL POST-GENERATION VALIDATION
-        reopened = openpyxl.load_workbook(filepath, data_only=True)
+        reopened = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
         try:
             if "Remediated Dataset" not in reopened.sheetnames:
                 raise ValueError("Remediated workbook is missing 'Remediated Dataset' worksheet.")

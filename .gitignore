@@ -24,6 +24,8 @@ celerybeat-schedule
 **/reports/*.xlsx
 **/data/remediated/*
 !**/data/remediated/.gitkeep
+datasets/test/simulated_*.csv
+datasets/simulated/
 
 # OS & Editors
 .DS_Store

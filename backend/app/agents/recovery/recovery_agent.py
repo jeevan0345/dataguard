@@ -297,6 +297,14 @@ class RecoveryAgent(BaseAgent):
                 detector = IsolationForestDetector()
                 iso_res = detector.detect(remediated)
                 outlier_indices = set(iso_res.get("anomalous_row_indices", []))
+                if not outlier_indices:
+                    # Fallback to action parameters identified during pre-audit inspection
+                    param_indices = act.get("action_parameters", {}).get("anomalous_indices", [])
+                    if param_indices:
+                        outlier_indices = set(param_indices)
+                    elif act.get("action_parameters", {}).get("count", 0) > 0:
+                        cnt = min(int(act.get("action_parameters", {}).get("count", 0)), len(remediated))
+                        outlier_indices = set(range(cnt))
                 if outlier_indices:
                     remediated = [r for idx, r in enumerate(remediated) if idx not in outlier_indices]
 

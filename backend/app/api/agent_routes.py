@@ -180,7 +180,8 @@ def orchestrate_audit(
     Persists findings to PostgreSQL.
     """
     try:
-        rows = DatasetLoader.load_dataset(payload.dataset_path)
+        fetch_limit = payload.limit or 2000
+        rows = DatasetLoader.load_dataset(payload.dataset_path, limit=fetch_limit)
         if not rows:
             raise HTTPException(status_code=404, detail=f"Dataset '{payload.dataset_path}' is empty or not found.")
 
@@ -249,7 +250,7 @@ def set_audit_as_baseline(
         raise HTTPException(status_code=404, detail="Inspection run not found.")
 
     try:
-        rows = DatasetLoader.load_dataset(run.dataset_path)
+        rows = DatasetLoader.load_dataset(run.dataset_path, limit=500)
     except Exception:
         rows = []
 
@@ -294,9 +295,10 @@ def run_simulation(
         audit_res = sim_result.get("audit", {})
         if audit_res and "inspection" in audit_res:
             col_count = audit_res.get("column_count", 0)
+            target_path = sim_result.get("dataset_path", payload.dataset_path)
             inspection_run = InspectionFindingService.save_inspection(
                 db=db,
-                dataset_path=payload.dataset_path,
+                dataset_path=target_path,
                 inspection_result=audit_res["inspection"],
                 row_count=sim_result.get("final_row_count", payload.sample_size),
                 column_count=col_count,
@@ -307,6 +309,7 @@ def run_simulation(
             audit_res["audit_hmac"] = inspection_run.audit_hmac
             audit_res["created_at"] = inspection_run.created_at.isoformat() if inspection_run.created_at else None
             audit_res["friendly_name"] = _friendly_dataset_name(payload.dataset_path)
+            audit_res["dataset_path"] = target_path
             sim_result["audit"] = audit_res
 
         return sim_result
@@ -393,7 +396,12 @@ def execute_and_verify_recovery(
                         "evidence": ev,
                     })
 
-        all_rows = DatasetLoader.load_dataset(payload.dataset_path)
+        # Determine authoritative row limit based on inspection run or safe memory ceiling
+        target_limit = 2000
+        if inspection_run and inspection_run.row_count and inspection_run.row_count > 0:
+            target_limit = min(inspection_run.row_count, 5000)
+
+        all_rows = DatasetLoader.load_dataset(payload.dataset_path, limit=target_limit)
         sample = all_rows[:1000] if all_rows else []
         actual_schema = SchemaInference.infer_schema(sample)
         expected_schema = payload.expected_schema or actual_schema
@@ -461,9 +469,8 @@ def execute_and_verify_recovery(
                 safe_act = copy.deepcopy(matched)
                 validated_actions.append(safe_act)
 
-        # 4. Execute recovery across full dataset up to 50,000 rows
-        MAX_AUDIT_ROWS = 50000
-        target_rows = all_rows[:MAX_AUDIT_ROWS]
+        # 4. Execute recovery across audited dataset scope (memory-safe for Render 512MB)
+        target_rows = all_rows[:target_limit]
         original_count = len(target_rows)
 
         executed_audit_records: list[dict[str, Any]] = []

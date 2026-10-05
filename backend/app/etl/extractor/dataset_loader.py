@@ -42,9 +42,11 @@ class DatasetLoader:
     def load_dataset(
         cls,
         dataset_path: str,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Load a dataset and return it as a list of dictionaries.
+        Supports optional limit for memory-safe partial loads.
         """
 
         full_path = (cls.DATASET_ROOT / dataset_path).resolve()
@@ -70,13 +72,13 @@ class DatasetLoader:
         extension = full_path.suffix.lower()
 
         if extension == ".csv":
-            return cls._load_csv(full_path)
+            return cls._load_csv(full_path, limit=limit)
 
         if extension == ".json":
-            return cls._load_json(full_path)
+            return cls._load_json(full_path, limit=limit)
 
         if extension == ".xlsx":
-            return cls._load_excel(full_path)
+            return cls._load_excel(full_path, limit=limit)
 
         raise ValueError(
             f"Unsupported dataset format: {extension}"
@@ -85,9 +87,10 @@ class DatasetLoader:
     @staticmethod
     def _load_csv(
         file_path: Path,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Load CSV using Python's built-in csv module.
+        Load CSV using Python's built-in csv module with optional row limit.
         """
 
         with file_path.open(
@@ -103,11 +106,20 @@ class DatasetLoader:
                     "CSV file does not contain a header row."
                 )
 
+            if limit is not None and limit > 0:
+                rows: list[dict[str, Any]] = []
+                for idx, row in enumerate(reader):
+                    if idx >= limit:
+                        break
+                    rows.append(dict(row))
+                return rows
+
             return [dict(row) for row in reader]
 
     @staticmethod
     def _load_json(
         file_path: Path,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Load JSON dataset.
@@ -144,7 +156,7 @@ class DatasetLoader:
                     "JSON dataset records must be objects."
                 )
 
-            return data
+            return data[:limit] if (limit is not None and limit > 0) else data
 
         if isinstance(data, dict):
 
@@ -166,7 +178,7 @@ class DatasetLoader:
                     "JSON dataset records must be objects."
                 )
 
-            return data["data"]
+            return data["data"][:limit] if (limit is not None and limit > 0) else data["data"]
 
         raise ValueError(
             "Unsupported JSON dataset structure."
@@ -175,6 +187,7 @@ class DatasetLoader:
     @staticmethod
     def _load_excel(
         file_path: Path,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Load XLSX using openpyxl.
@@ -226,6 +239,8 @@ class DatasetLoader:
         result = []
 
         for row in rows[1:]:
+            if limit is not None and limit > 0 and len(result) >= limit:
+                break
 
             record = {}
 

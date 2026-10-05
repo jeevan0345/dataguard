@@ -103,7 +103,17 @@ export const RecoveryView: React.FC<RecoveryViewProps> = ({ dossier, onNavigate,
       setExecutionResult(res);
       setVerification(res.verification);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Recovery execution failed.');
+      const msg =
+        err.response?.data?.detail ||
+        (err.code === 'ECONNABORTED'
+          ? 'Recovery execution timed out. The backend server may be restarting or processing a large batch.'
+          : null) ||
+        (err.message === 'Network Error'
+          ? 'Network error: Backend server is temporarily unreachable or restarting on Render.'
+          : null) ||
+        err.message ||
+        'Recovery execution failed.';
+      setError(msg);
     } finally {
       setExecuting(false);
     }
