@@ -70,6 +70,7 @@ class InspectionFindingService:
             [],
         )
 
+        persisted_findings: list[InspectionFinding] = []
         for finding in findings:
             evidence = finding.get(
                 "evidence",
@@ -96,7 +97,7 @@ class InspectionFindingService:
                 ),
                 column_name=evidence.get(
                     "column",
-                ),
+                ) or finding.get("column"),
                 expected_type=evidence.get(
                     "expected_type",
                 ),
@@ -106,6 +107,20 @@ class InspectionFindingService:
             )
 
             db.add(inspection_finding)
+            persisted_findings.append(inspection_finding)
+
+        db.flush()
+
+        # Persist transparent method-by-method ML detection proofs
+        ml_proof_data = inspection_result.get("ml_proof") or inspection_result.get("ml_analysis", {}).get("ml_proof", {})
+        if ml_proof_data:
+            from app.services.ml_proof_service import MLProofService
+            MLProofService.persist_ml_proofs(
+                db=db,
+                inspection_run=inspection_run,
+                ml_proof_data=ml_proof_data,
+                persisted_findings=persisted_findings,
+            )
 
         db.commit()
         db.refresh(inspection_run)

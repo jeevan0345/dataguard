@@ -7,6 +7,7 @@ import { DashboardView } from './views/DashboardView';
 import { AgentSwarmView } from './views/AgentSwarmView';
 import { SimulatorView } from './views/SimulatorView';
 import { FindingsView } from './views/FindingsView';
+import { MLDetectionProofView } from './views/MLDetectionProofView';
 import { RecoveryView } from './views/RecoveryView';
 import { ReportsView } from './views/ReportsView';
 import { CopilotView } from './views/CopilotView';
@@ -92,6 +93,13 @@ export const App: React.FC = () => {
             )}
             {currentTab === 'findings' && (
               <FindingsView
+                dossier={activeDossier}
+                onNavigate={setCurrentTab}
+                onSelectDossier={setActiveDossier}
+              />
+            )}
+            {currentTab === 'ml-proof' && (
+              <MLDetectionProofView
                 dossier={activeDossier}
                 onNavigate={setCurrentTab}
                 onSelectDossier={setActiveDossier}

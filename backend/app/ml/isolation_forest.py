@@ -56,6 +56,9 @@ class IsolationForestDetector:
         `threshold = min(-0.15, float(np.mean(scores) - 3.5 * np.std(scores)))`.
         ID-like columns (e.g. order_item_id) and constant columns are excluded from analysis.
         """
+        import time
+        t_start = time.perf_counter()
+
         if not rows:
             return {
                 "detected": False,
@@ -63,6 +66,27 @@ class IsolationForestDetector:
                 "anomalous_row_indices": [],
                 "anomaly_scores": [],
                 "findings": [],
+                "isolation_forest_proof": {
+                    "method": "Isolation Forest",
+                    "agent": "Inspector Agent",
+                    "classification": "Machine-learning-based unsupervised anomaly detection",
+                    "executed": False,
+                    "execution_status": "NOT_APPLICABLE",
+                    "status": "NOT_APPLICABLE",
+                    "reason": "Dataset is empty",
+                    "features": [],
+                    "features_count": 0,
+                    "samples": 0,
+                    "anomalies_detected": 0,
+                    "contamination": str(self.contamination),
+                    "model_parameters": {
+                        "algorithm": "IsolationForest",
+                        "contamination": str(self.contamination),
+                        "n_estimators": self.n_estimators,
+                        "random_state": self.random_state,
+                    },
+                    "flagged_anomalies": [],
+                },
             }
 
         # 1. Discover all candidate numeric columns (excluding ID-like columns)
@@ -92,12 +116,35 @@ class IsolationForestDetector:
                     valid_numeric_cols.append(col)
 
         if not valid_numeric_cols:
+            t_elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
             return {
                 "detected": False,
                 "message": "No numeric non-ID columns available for Isolation Forest",
                 "anomalous_row_count": 0,
                 "anomalous_row_indices": [],
                 "findings": [],
+                "isolation_forest_proof": {
+                    "method": "Isolation Forest",
+                    "agent": "Inspector Agent",
+                    "classification": "Machine-learning-based unsupervised anomaly detection",
+                    "executed": False,
+                    "execution_status": "NOT_APPLICABLE",
+                    "execution_time_ms": t_elapsed_ms,
+                    "status": "NOT_APPLICABLE",
+                    "reason": "No numeric non-ID columns available for Isolation Forest",
+                    "features": [],
+                    "features_count": 0,
+                    "samples": len(rows),
+                    "anomalies_detected": 0,
+                    "contamination": str(self.contamination),
+                    "model_parameters": {
+                        "algorithm": "IsolationForest",
+                        "contamination": str(self.contamination),
+                        "n_estimators": self.n_estimators,
+                        "random_state": self.random_state,
+                    },
+                    "flagged_anomalies": [],
+                },
             }
 
         # 2. Build 2D NumPy array with median imputation
@@ -149,6 +196,21 @@ class IsolationForestDetector:
         anom_count = len(anom_indices)
         anom_pct = round((anom_count / n_rows) * 100, 2)
 
+        # Score distribution histogram for visualization
+        score_dist: list[dict[str, Any]] = []
+        if len(scores) > 0:
+            min_s = float(np.min(scores))
+            max_s = float(np.max(scores))
+            bins = np.linspace(min_s, max_s, 16)
+            hist, _ = np.histogram(scores, bins=bins)
+            for k in range(len(hist)):
+                score_dist.append({
+                    "range": f"{bins[k]:.2f} to {bins[k+1]:.2f}",
+                    "score_mid": round(float((bins[k] + bins[k+1]) / 2), 3),
+                    "count": int(hist[k]),
+                    "is_anomalous": bool(bins[k+1] <= separation_threshold),
+                })
+
         findings = []
         if anom_count > 0:
             severity = "CRITICAL" if anom_pct > 15.0 else ("HIGH" if anom_pct > 5.0 else "MEDIUM")
@@ -174,6 +236,54 @@ class IsolationForestDetector:
                 },
             })
 
+        t_elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        flagged_anomalies = [
+            {
+                "row_index": idx,
+                "prediction": -1,
+                "anomaly_label": "ANOMALY",
+                "anomaly_score": round(float(scores[idx]), 4),
+                "decision_score": round(float(scores[idx]), 4),
+                "status": "ANOMALY DETECTED",
+                "values": {c: rows[idx].get(c) for c in valid_numeric_cols},
+            }
+            for idx in anom_indices
+        ]
+
+        isolation_forest_proof = {
+            "method": "Isolation Forest",
+            "agent": "Inspector Agent",
+            "classification": "Machine-learning-based unsupervised anomaly detection",
+            "executed": True,
+            "execution_status": "EXECUTED",
+            "execution_time_ms": t_elapsed_ms,
+            "status": "ANOMALY_DETECTED" if anom_count > 0 else "HEALTHY",
+            "features": valid_numeric_cols,
+            "features_count": len(valid_numeric_cols),
+            "samples": n_rows,
+            "anomalies_detected": anom_count,
+            "anomalous_percentage": anom_pct,
+            "contamination": str(self.contamination),
+            "model_parameters": {
+                "algorithm": "IsolationForest",
+                "contamination": str(self.contamination),
+                "n_estimators": self.n_estimators,
+                "random_state": self.random_state,
+                "max_samples": "auto",
+            },
+            "score_range": {
+                "min": round(float(np.min(scores)), 4) if len(scores) > 0 else 0.0,
+                "max": round(float(np.max(scores)), 4) if len(scores) > 0 else 0.0,
+                "mean": round(mean_score, 4),
+                "std": round(std_score, 4),
+            },
+            "separation_threshold": round(separation_threshold, 4),
+            "prediction_definition": "-1 = anomaly, 1 = normal",
+            "flagged_anomalies": flagged_anomalies,
+            "score_distribution": score_dist,
+        }
+
         return {
             "detected": anom_count > 0,
             "features_analyzed": valid_numeric_cols,
@@ -188,4 +298,5 @@ class IsolationForestDetector:
                 "outlier_count": anom_count,
                 "features_count": n_cols,
             },
+            "isolation_forest_proof": isolation_forest_proof,
         }

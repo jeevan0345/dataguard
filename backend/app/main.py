@@ -56,6 +56,32 @@ app.include_router(agent_router)
 
 
 # ---------------------------------------------------------
+# ML Detection Proof Endpoint (Direct conceptual URL)
+# ---------------------------------------------------------
+from uuid import UUID
+from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.database.session import get_db
+from app.schemas.ml_proof import MLDetectionProofResponse
+from app.services.ml_proof_service import MLProofService
+
+@app.get("/audits/{inspection_id}/ml-proof", response_model=MLDetectionProofResponse)
+def get_ml_proof_direct(
+    inspection_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Direct endpoint for transparent ML detection proof as specified in DataGuard 2.0 viva contract.
+    """
+    try:
+        return MLProofService.get_ml_proof_response(db, inspection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------
 # Health Check Endpoint
 # ---------------------------------------------------------
 @app.get("/health")

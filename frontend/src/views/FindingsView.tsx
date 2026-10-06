@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   ShieldCheck,
   Lock,
+  Binary,
 } from 'lucide-react';
 
 interface FindingsViewProps {
@@ -248,6 +249,15 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
                     <BookmarkCheck className="w-3.5 h-3.5" />
                     <span>{settingBaseline ? 'Saving...' : 'Set as Baseline'}</span>
                   </button>
+
+                  <button
+                    onClick={() => onNavigate('ml-proof')}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600/20 text-purple-300 border border-purple-500/30 hover:bg-purple-600/30 transition text-xs font-semibold cursor-pointer"
+                    title="Examine statistical bounds, formulas, Isolation Forest decision scores, and KS test proofs"
+                  >
+                    <Binary className="w-3.5 h-3.5" />
+                    <span>ML Detection Proof</span>
+                  </button>
                 </>
               )}
             </div>
@@ -340,7 +350,21 @@ export const FindingsView: React.FC<FindingsViewProps> = ({ dossier, onNavigate,
 
                       {isExpanded && (
                         <div className="p-4 bg-slate-950/80 border-t border-slate-800 text-xs space-y-3">
-                          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Structured Evidence Payload:</div>
+                          <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Structured Evidence Payload:</div>
+                            {(f.type.toUpperCase().includes('OUTLIER') ||
+                              f.type.toUpperCase().includes('ANOMALY') ||
+                              f.type.toUpperCase().includes('DRIFT') ||
+                              f.type.toUpperCase().includes('DISTRIBUTION')) && (
+                              <button
+                                onClick={() => onNavigate('ml-proof')}
+                                className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-950/50 px-2.5 py-1 rounded-lg border border-emerald-600/30"
+                              >
+                                <Binary className="w-3.5 h-3.5" />
+                                <span>Inspect ML Detection Proof</span>
+                              </button>
+                            )}
+                          </div>
                           <pre className="p-3 rounded-xl bg-slate-900 text-emerald-300 font-mono text-[11px] overflow-x-auto border border-slate-800">
                             {JSON.stringify(f.evidence, null, 2)}
                           </pre>

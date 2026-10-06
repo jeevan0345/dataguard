@@ -40,6 +40,7 @@ from app.evidence.evidence_builder import EvidenceBuilder
 from app.agents.root_cause.root_cause_agent import RootCauseAgent
 from app.agents.recommendation.recommendation_agent import RecommendationAgent
 from app.audit.models import ETLRun, ETLFinding
+from app.schemas.ml_proof import MLDetectionProofResponse
 
 router = APIRouter(
     prefix="/agents",
@@ -87,6 +88,7 @@ def _build_dossier_from_run(db: Session, run: InspectionRun) -> dict[str, Any]:
             except Exception:
                 ev = {"raw": f.evidence}
         findings.append({
+            "id": str(f.id),
             "type": f.finding_type,
             "severity": f.severity,
             "message": f.message,
@@ -845,6 +847,47 @@ def get_audit_by_id(
         raise HTTPException(status_code=404, detail="Audit dossier not found.")
 
     return _build_dossier_from_run(db, run)
+
+
+@router.get("/audits/latest/ml-proof", response_model=MLDetectionProofResponse)
+def get_latest_ml_proof(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retrieves transparent method-by-method mathematical & ML proof for the latest audit run.
+    """
+    latest_run = (
+        db.query(InspectionRun)
+        .order_by(InspectionRun.created_at.desc())
+        .first()
+    )
+    if not latest_run:
+        raise HTTPException(status_code=404, detail="No persisted audit records found.")
+
+    from app.services.ml_proof_service import MLProofService
+    try:
+        return MLProofService.get_ml_proof_response(db, latest_run.id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/audits/{inspection_id}/ml-proof", response_model=MLDetectionProofResponse)
+def get_audit_ml_proof(
+    inspection_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Retrieves transparent method-by-method mathematical & ML proof for a specific audit run.
+    """
+    from app.services.ml_proof_service import MLProofService
+    try:
+        return MLProofService.get_ml_proof_response(db, inspection_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/audits")

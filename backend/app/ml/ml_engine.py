@@ -84,4 +84,10 @@ class MLEngine:
             "statistical_summary": stat_res.get("column_summaries", {}),
             "distribution_drift": drift_res,
             "isolation_forest": if_res.get("summary", {}),
+            "ml_proof": {
+                "z_score": stat_res.get("z_score_proof", {}),
+                "iqr": stat_res.get("iqr_proof", {}),
+                "isolation_forest": if_res.get("isolation_forest_proof", {}),
+                "ks_test": drift_res.get("ks_test_proof", {}),
+            },
         }

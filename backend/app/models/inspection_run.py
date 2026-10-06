@@ -69,3 +69,9 @@ class InspectionRun(Base):
         back_populates="inspection_run",
         cascade="all, delete-orphan",
     )
+
+    ml_proofs = relationship(
+        "MLDetectionProof",
+        back_populates="inspection_run",
+        cascade="all, delete-orphan",
+    )

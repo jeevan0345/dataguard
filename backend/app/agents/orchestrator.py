@@ -155,16 +155,18 @@ class MultiAgentOrchestrator:
             reference_rows=reference_rows,
         )
 
-        # 2. Drift Agent (if reference available)
-        drift_res = None
-        if reference_rows and len(reference_rows) >= 10:
-            drift_res = self.drift_agent.execute(
-                current_rows=rows,
-                reference_rows=reference_rows,
-            )
-            # Merge drift findings into inspector findings
-            if drift_res.get("findings"):
-                inspector_res["findings"].extend(drift_res["findings"])
+        # 2. Drift Agent (produces real KS test proof or transparent NOT_EXECUTED status)
+        drift_res = self.drift_agent.execute(
+            current_rows=rows,
+            reference_rows=reference_rows,
+        )
+        if drift_res.get("findings"):
+            inspector_res["findings"].extend(drift_res["findings"])
+
+        # Sync KS test proof into Inspector's unified ml_proof
+        if "ml_proof" not in inspector_res:
+            inspector_res["ml_proof"] = {}
+        inspector_res["ml_proof"]["ks_test"] = drift_res.get("ks_test_proof", {})
 
         # Deduplicate findings by (type, column)
         deduped_findings: list[dict[str, Any]] = []

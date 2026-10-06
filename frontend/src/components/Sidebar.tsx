@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   FileText,
   BotMessageSquare,
+  Binary,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -21,6 +22,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
     { id: 'agents', label: 'Agent Swarm', icon: Cpu },
     { id: 'simulator', label: 'Pipeline Simulator', icon: PlayCircle },
     { id: 'findings', label: 'Findings & Evidence', icon: SearchCode },
+    { id: 'ml-proof', label: 'ML Detection Proof', icon: Binary },
     { id: 'recovery', label: 'Recovery Console', icon: ShieldCheck },
     { id: 'reports', label: 'Audit Reports', icon: FileText },
     { id: 'copilot', label: 'AI Copilot Assistant', icon: BotMessageSquare },

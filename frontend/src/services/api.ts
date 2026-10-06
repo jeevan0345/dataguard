@@ -11,7 +11,8 @@ import {
   GeneratedReport,
   AuditSummaryItem,
   RegisteredDataset,
-  RecoveryExecutionResult
+  RecoveryExecutionResult,
+  MLDetectionProofResponse
 } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '') || 'http://localhost:8000';
@@ -88,6 +89,14 @@ export const api = {
     },
     getAuditById: async (id: string): Promise<AuditDossier> => {
       const res = await apiClient.get(`/agents/audits/${id}`);
+      return res.data;
+    },
+    getMLProof: async (inspectionId: string): Promise<MLDetectionProofResponse> => {
+      const res = await apiClient.get(`/agents/audits/${inspectionId}/ml-proof`);
+      return res.data;
+    },
+    getLatestMLProof: async (): Promise<MLDetectionProofResponse> => {
+      const res = await apiClient.get('/agents/audits/latest/ml-proof');
       return res.data;
     },
     listAudits: async (): Promise<AuditSummaryItem[]> => {

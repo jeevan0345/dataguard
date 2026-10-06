@@ -83,6 +83,10 @@ class InspectionService:
             dataset_path
         )
 
+        from app.services.baseline_service import BaselineService
+        baseline = BaselineService.get_baseline(db, dataset_path)
+        reference_rows = baseline.reference_sample if baseline else None
+
         # -----------------------------------------------------
         # 2. Perform complete inspection
         # -----------------------------------------------------
@@ -90,6 +94,7 @@ class InspectionService:
             rows=rows,
             expected_schema=expected_schema,
             dataset_path=dataset_path,
+            reference_rows=reference_rows,
         )
 
         # -----------------------------------------------------
@@ -131,6 +136,7 @@ class InspectionService:
         rows: list[dict[str, Any]],
         expected_schema: dict[str, str] | None = None,
         dataset_path: str | None = None,
+        reference_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Perform the complete DataGuard inspection workflow
@@ -174,6 +180,7 @@ class InspectionService:
                 rows=rows,
                 expected_schema=expected_schema,
                 actual_schema=actual_schema,
+                reference_rows=reference_rows,
             )
         )
 

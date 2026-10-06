@@ -290,3 +290,194 @@ export interface RegisteredDataset {
   is_active: boolean;
   created_at: string;
 }
+
+// ML Detection Proof Interfaces
+export interface ZScoreColumnProof {
+  column: string;
+  sample_size: number;
+  mean: number;
+  std_dev: number;
+  threshold: string;
+  threshold_value: number;
+  max_z_score: number;
+  flagged_count: number;
+  status: string;
+  formula: string;
+  explanation: string;
+  flagged_values: Array<{
+    row_index: number;
+    value: number;
+    z_score: number;
+    threshold: number;
+    message?: string;
+  }>;
+  distribution_sample: Array<{
+    value: number;
+    z_score: number;
+    is_anomaly: boolean;
+  }>;
+  related_finding_id?: string;
+}
+
+export interface ZScoreMethodProof {
+  method: string;
+  agent: string;
+  classification: string;
+  executed: boolean;
+  execution_status: string;
+  execution_time_ms?: number;
+  status: string;
+  columns_analyzed: number;
+  total_flagged_count: number;
+  max_z_score: number;
+  threshold: string;
+  threshold_value: number;
+  formula: string;
+  explanation: string;
+  columns: ZScoreColumnProof[];
+}
+
+export interface IQRColumnProof {
+  column: string;
+  observations: number;
+  sample_size: number;
+  q1: number;
+  q3: number;
+  iqr: number;
+  median: number;
+  lower_bound: number;
+  upper_bound: number;
+  outlier_count: number;
+  outlier_percentage: number;
+  status: string;
+  formula: string;
+  explanation: string;
+  outliers: Array<{
+    row_index: number;
+    value: number;
+    bound_violated: string;
+    bound_value: number;
+    message?: string;
+  }>;
+  boxplot?: {
+    min: number;
+    q1: number;
+    median: number;
+    q3: number;
+    max: number;
+    iqr: number;
+    lower_bound: number;
+    upper_bound: number;
+    outlier_count: number;
+  };
+  related_finding_id?: string;
+}
+
+export interface IQRMethodProof {
+  method: string;
+  agent: string;
+  classification: string;
+  executed: boolean;
+  execution_status: string;
+  execution_time_ms?: number;
+  status: string;
+  columns_analyzed: number;
+  total_outliers_count: number;
+  multiplier: number;
+  method_rule: string;
+  formulas: string[];
+  explanation: string;
+  columns: IQRColumnProof[];
+}
+
+export interface IsolationForestMethodProof {
+  method: string;
+  agent: string;
+  classification: string;
+  executed: boolean;
+  execution_status: string;
+  execution_time_ms?: number;
+  status: string;
+  reason?: string;
+  features: string[];
+  features_count: number;
+  samples: number;
+  anomalies_detected: number;
+  anomalous_percentage?: number;
+  contamination: string | number;
+  model_parameters: Record<string, any>;
+  score_range?: {
+    min: number;
+    max: number;
+    mean: number;
+  };
+  separation_threshold?: number;
+  prediction_definition: string;
+  flagged_anomalies: Array<{
+    row_index: number;
+    decision_score: number;
+    prediction: number;
+    features: Record<string, any>;
+  }>;
+  score_distribution: Array<{
+    bin: string;
+    count: number;
+    is_anomaly_bin: boolean;
+  }>;
+  related_finding_id?: string;
+}
+
+export interface KSTestColumnProof {
+  column: string;
+  baseline_sample_size: number;
+  current_sample_size: number;
+  ks_statistic: number;
+  p_value: number;
+  significance_level: number;
+  d_threshold: number;
+  decision: string;
+  is_drift: boolean;
+  baseline_mean: number;
+  current_mean: number;
+  decision_rule: string;
+  explanation: string;
+  cdf_curve: Array<{
+    x: number;
+    baseline_cdf: number;
+    current_cdf: number;
+  }>;
+  related_finding_id?: string;
+}
+
+export interface KSTestMethodProof {
+  method: string;
+  agent: string;
+  classification: string;
+  executed: boolean;
+  execution_status: string;
+  execution_time_ms?: number;
+  status: string;
+  reason?: string;
+  significance_level: number;
+  d_threshold: number;
+  decision_rule: string;
+  columns_tested: number;
+  drift_detected_count: number;
+  columns: KSTestColumnProof[];
+  explanation: string;
+}
+
+export interface MLDetectionMethodsResponse {
+  z_score: ZScoreMethodProof;
+  iqr: IQRMethodProof;
+  isolation_forest: IsolationForestMethodProof;
+  ks_test: KSTestMethodProof;
+}
+
+export interface MLDetectionProofResponse {
+  inspection_id: string;
+  dataset: string;
+  created_at?: string;
+  methods: MLDetectionMethodsResponse;
+}
+

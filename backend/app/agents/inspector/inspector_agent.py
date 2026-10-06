@@ -137,6 +137,7 @@ class InspectorAgent(BaseAgent):
             "data_quality": data_quality_result,
             "schema_drift": schema_drift_result,
             "ml_analysis": ml_result,
+            "ml_proof": ml_result.get("ml_proof", {}),
         }
 
     # -------------------------------------------------------------

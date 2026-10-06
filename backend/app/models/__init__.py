@@ -14,6 +14,7 @@ from .inspection_finding import InspectionFinding
 from .user import User
 from .dataset_baseline import DatasetBaseline
 from .recovery_run import RecoveryRun
+from .ml_detection_proof import MLDetectionProof
 
 
 # ETL models will be added later

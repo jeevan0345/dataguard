@@ -231,7 +231,78 @@ class ReporterAgent(BaseAgent):
             ]))
             story.append(rca_table)
 
-        # 5. Build Document
+        # 5. ML Detection Evidence
+        ml_proof = (
+            inspection_data.get("inspection", {}).get("ml_proof")
+            or inspection_data.get("ml_proof")
+            or {}
+        )
+        if ml_proof:
+            story.append(Spacer(1, 15))
+            story.append(Paragraph("<b>3. ML Detection Evidence & Method Proofs</b>", h2_style))
+
+            ml_ev_rows = [
+                [
+                    Paragraph("<b>Method</b>", body_style),
+                    Paragraph("<b>Agent</b>", body_style),
+                    Paragraph("<b>Execution Status</b>", body_style),
+                    Paragraph("<b>Mathematical Proof / Findings</b>", body_style),
+                ]
+            ]
+
+            # Z-Score
+            z_p = ml_proof.get("z_score", {})
+            z_status = z_p.get("execution_status", "EXECUTED" if z_p.get("executed") else "NOT_APPLICABLE")
+            z_desc = f"Cols: {z_p.get('columns_analyzed', 0)}, Flagged: {z_p.get('total_flagged_count', 0)}, Max |Z|: {z_p.get('max_z_score', 0):.2f}, Rule: {z_p.get('threshold', '|z|>3.0')}"
+            ml_ev_rows.append([
+                Paragraph("<b>Z-Score</b><br/><font size=7 color='#64748B'>Statistical anomaly detection</font>", body_style),
+                Paragraph("Inspector Agent", body_style),
+                Paragraph(f"<font color='{'#059669' if z_status=='EXECUTED' else '#D97706'}'><b>{z_status}</b></font>", body_style),
+                Paragraph(z_desc, body_style),
+            ])
+
+            # IQR
+            iqr_p = ml_proof.get("iqr", {})
+            iqr_status = iqr_p.get("execution_status", "EXECUTED" if iqr_p.get("executed") else "NOT_APPLICABLE")
+            iqr_desc = f"Cols: {iqr_p.get('columns_analyzed', 0)}, Outliers: {iqr_p.get('total_outliers_count', 0)}, Rule: 1.5 × IQR fences"
+            ml_ev_rows.append([
+                Paragraph("<b>IQR</b><br/><font size=7 color='#64748B'>Statistical outlier detection</font>", body_style),
+                Paragraph("Inspector Agent", body_style),
+                Paragraph(f"<font color='{'#059669' if iqr_status=='EXECUTED' else '#D97706'}'><b>{iqr_status}</b></font>", body_style),
+                Paragraph(iqr_desc, body_style),
+            ])
+
+            # Isolation Forest
+            if_p = ml_proof.get("isolation_forest", {})
+            if_status = if_p.get("execution_status", "EXECUTED" if if_p.get("executed") else "NOT_APPLICABLE")
+            if_desc = f"Samples: {if_p.get('samples', 0)}, Features: {len(if_p.get('features', []))}, Anomalies: {if_p.get('anomalies_detected', 0)}, Contamination: {if_p.get('contamination', 'auto')}"
+            ml_ev_rows.append([
+                Paragraph("<b>Isolation Forest</b><br/><font size=7 color='#64748B'>Unsupervised ML anomaly detection</font>", body_style),
+                Paragraph("Inspector Agent", body_style),
+                Paragraph(f"<font color='{'#059669' if if_status=='EXECUTED' else '#D97706'}'><b>{if_status}</b></font>", body_style),
+                Paragraph(if_desc, body_style),
+            ])
+
+            # KS Test
+            ks_p = ml_proof.get("ks_test", {})
+            ks_status = ks_p.get("execution_status", "EXECUTED" if ks_p.get("executed") else "NOT_EXECUTED")
+            ks_desc = f"Columns: {ks_p.get('columns_tested', 0)}, Drift: {ks_p.get('drift_detected_count', 0)}, Alpha: {ks_p.get('significance_level', 0.05)}" if ks_p.get("executed") else f"NOT EXECUTED: {ks_p.get('reason', 'historical baseline unavailable')}"
+            ml_ev_rows.append([
+                Paragraph("<b>KS Test</b><br/><font size=7 color='#64748B'>Statistical drift detection</font>", body_style),
+                Paragraph("Drift Agent", body_style),
+                Paragraph(f"<font color='{'#059669' if ks_status=='EXECUTED' else '#D97706'}'><b>{ks_status}</b></font>", body_style),
+                Paragraph(ks_desc, body_style),
+            ])
+
+            ml_ev_table = Table(ml_ev_rows, colWidths=[110, 95, 105, 220])
+            ml_ev_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1F5F9")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ("PADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.append(ml_ev_table)
+
+        # 6. Build Document
         doc.build(story)
         return filepath
 
@@ -285,8 +356,63 @@ class ReporterAgent(BaseAgent):
                 str(f.get("evidence")),
             ])
 
+        # Sheet 3: ML Detection Evidence
+        ml_proof = (
+            inspection_data.get("inspection", {}).get("ml_proof")
+            or inspection_data.get("ml_proof")
+            or {}
+        )
+        all_sheets = [ws_summary, ws_findings]
+        if ml_proof:
+            ws_ml = wb.create_sheet(title="ML Detection Evidence")
+            ws_ml.append(["Method", "Agent", "Classification", "Execution Status", "Finding / Calculation Evidence"])
+            for cell in ws_ml[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+
+            # Z-Score
+            z_p = ml_proof.get("z_score", {})
+            ws_ml.append([
+                "Z-Score",
+                "Inspector Agent",
+                "Statistical anomaly detection",
+                z_p.get("execution_status", "EXECUTED"),
+                f"Columns analyzed: {z_p.get('columns_analyzed', 0)}, Flagged count: {z_p.get('total_flagged_count', 0)}, Max |Z|: {z_p.get('max_z_score', 0):.2f}, Threshold: {z_p.get('threshold', '|z|>3.0')}",
+            ])
+
+            # IQR
+            iqr_p = ml_proof.get("iqr", {})
+            ws_ml.append([
+                "IQR",
+                "Inspector Agent",
+                "Statistical outlier detection",
+                iqr_p.get("execution_status", "EXECUTED"),
+                f"Columns analyzed: {iqr_p.get('columns_analyzed', 0)}, Outliers count: {iqr_p.get('total_outliers_count', 0)}, Method rule: {iqr_p.get('method_rule', '1.5 × IQR')}",
+            ])
+
+            # Isolation Forest
+            if_p = ml_proof.get("isolation_forest", {})
+            ws_ml.append([
+                "Isolation Forest",
+                "Inspector Agent",
+                "Unsupervised ML anomaly detection",
+                if_p.get("execution_status", "EXECUTED"),
+                f"Samples: {if_p.get('samples', 0)}, Features: {len(if_p.get('features', []))}, Anomalies: {if_p.get('anomalies_detected', 0)}, Contamination: {if_p.get('contamination', 'auto')}",
+            ])
+
+            # KS Test
+            ks_p = ml_proof.get("ks_test", {})
+            ws_ml.append([
+                "Kolmogorov-Smirnov Two-Sample Test",
+                "Drift Agent",
+                "Statistical distribution drift detection",
+                ks_p.get("execution_status", "NOT_EXECUTED"),
+                f"Columns tested: {ks_p.get('columns_tested', 0)}, Drift count: {ks_p.get('drift_detected_count', 0)}, Rule: {ks_p.get('decision_rule', 'p < 0.05 AND D >= 0.10')}" if ks_p.get("executed") else f"NOT EXECUTED: {ks_p.get('reason', 'historical baseline unavailable')}",
+            ])
+            all_sheets.append(ws_ml)
+
         # Auto-adjust column widths with safe sizing
-        for ws in [ws_summary, ws_findings]:
+        for ws in all_sheets:
             for col in ws.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col)
                 col_letter = openpyxl.utils.get_column_letter(col[0].column)

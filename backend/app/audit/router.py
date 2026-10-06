@@ -375,3 +375,32 @@ def inspect_dataset(
             status_code=400,
             detail=str(exc),
         )
+
+
+# =========================================================
+# ML DETECTION PROOF
+# =========================================================
+
+@router.get(
+    "/runs/{run_id}/ml-proof",
+)
+def get_ml_detection_proof(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve auditable mathematical and ML detection proofs for an inspection run.
+    """
+    from app.services.ml_proof_service import MLProofService
+    try:
+        return MLProofService.get_ml_proof_response(db=db, inspection_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        )
